@@ -343,4 +343,4 @@ def stable_id(*parts: str) -> str:
     and fine as a SQLite primary key.
     """
     h = hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()
-    return f"{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:24]}-{h[24:]}"
+    return f"{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:32]}"

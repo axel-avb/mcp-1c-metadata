@@ -242,9 +242,13 @@ def run_index(cfg: AppConfig, full: bool = False, no_vectors: bool = False) -> d
             log.info("deleted %d stale points from Qdrant", len(dropped))
 
         if changed:
+            import time
             embedder = Embedder(cfg.embedder)
             batch = 64
-            for i in range(0, len(changed), batch):
+            total = len(changed)
+            done = 0
+            t0 = time.monotonic()
+            for i in range(0, total, batch):
                 chunk = changed[i : i + batch]
                 vectors = embedder.embed_batched([it.text for it in chunk])
                 points = [
@@ -252,8 +256,17 @@ def run_index(cfg: AppConfig, full: bool = False, no_vectors: bool = False) -> d
                     for it, v in zip(chunk, vectors)
                 ]
                 client.upsert(collection_name=cfg.qdrant_collection, points=points, wait=True)
-                stats["vectors_updated"] += len(points)
-                log.info("embedded %d/%d", min(i + batch, len(changed)), len(changed))
+                done += len(points)
+                stats["vectors_updated"] = done
+                elapsed = time.monotonic() - t0
+                vps = done / elapsed if elapsed > 0 else 0
+                eta = (total - done) / vps if vps > 0 else 0
+                pct = done * 100 // total
+                bar_len = 40
+                filled = bar_len * done // total
+                bar = "█" * filled + "░" * (bar_len - filled)
+                print(f"\r  [{bar}] {pct:3d}%  {done}/{total}  {vps:.1f} vec/s  ETA {eta:.0f}s", end="", flush=True)
+            print()
             embedder.close()
         client.close()
 
