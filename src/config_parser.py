@@ -1,4 +1,8 @@
-"""Parser for 1C configuration source export (XML).
+"""Parser for 1C configuration source XML export.
+
+.. deprecated::
+    This XML-based parser is **deprecated** and will be replaced by a new
+    parser in a future revision. Do not extend this module.
 
 Expected layout (standard "configuration in source code" export):
 
@@ -24,6 +28,15 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator
+
+import warnings
+
+warnings.warn(
+    "config_parser is deprecated and will be replaced by a new parser. "
+    "Do not extend this module.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 # English type (as in Config.xml) -> (normalized key, folder names to scan)
 TYPE_MAP: dict[str, str] = {

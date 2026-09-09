@@ -19,6 +19,7 @@ from pathlib import Path
 
 from .bs_parser import parse_bs_file, infer_module_role
 from .config import AppConfig, load_config
+# DEPRECATED: config_parser (XML) will be replaced by a new parser.
 from .config_parser import (
     ConfigElement,
     ConfigObject,
