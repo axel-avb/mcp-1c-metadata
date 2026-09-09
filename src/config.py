@@ -58,6 +58,7 @@ class AppConfig:
     search: SearchConfig = field(default_factory=SearchConfig)
     host: str = "0.0.0.0"
     port: int = 8765
+    auth_token: str = ""  # if set, requires "Authorization: Bearer <token>" on HTTP
 
     def validate(self) -> None:
         if not self.config_root.is_dir():
@@ -89,6 +90,7 @@ _ENV_MAP: dict[str, tuple[str, ...]] = {
     "ONEC_SEARCH_TOP_K": ("search", "top_k"),
     "ONEC_HOST": ("host",),
     "ONEC_PORT": ("port",),
+    "ONEC_AUTH_TOKEN": ("auth_token",),
 }
 
 
@@ -140,7 +142,7 @@ def _apply_json(cfg: AppConfig, data: dict[str, Any]) -> None:
             setattr(obj, key, _coerce(data[key], type(getattr(obj, key))))
 
     for key in ("config_root", "project_data_dir", "qdrant_url", "qdrant_api_key",
-                "qdrant_collection", "graph_db_path", "host", "port"):
+                "qdrant_collection", "graph_db_path", "host", "port", "auth_token"):
         put(cfg, key)
 
     if isinstance(data.get("qdrant"), dict):

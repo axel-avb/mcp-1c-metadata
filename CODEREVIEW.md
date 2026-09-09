@@ -130,24 +130,27 @@ Docstring: «signature, visibility, module, **body**» (`src/server.py:231`);
 
 **Фикс:** `try/finally: client.close()`; clamp `top_k >= 1`; валидация `kind`.
 
-### H6. `reindex` (и `search_config`) могут повесить запрос MCP без ограничения
+### H6. `reindex` (и `search_config`) могут повесить запрос MCP без ограничения — **FIXED ✅**
 
 `reindex` синхронно в тулзе выполняет полный `run_index` (parse + embed всех
 изменённых узлов; таймаут эмбеддера 120 с, `src/embedder.py:24`). На
 тысячах узлов — минуты; MCP-клиент упрётся в таймаут, пока работа
 продолжается в фоне.
 
-**Фикс:** фоновая задача + инструмент статуса, либо как минимум
-документировать/ограничивать.
+**Фикс:** `reindex` теперь запускает `run_index` в фоновом daemon-потоке
+(`src/server.py`), статус в `_ReindexState` (thread-safe); добавлен
+инструмент `reindex_status`. `search_config` ограничен таймаутом эмбеддера.
 
-### H7. Нет аутентификации на streamable HTTP, привязка к `0.0.0.0`
+### H7. Нет аутентификации на streamable HTTP, привязка к `0.0.0.0` — **FIXED ✅**
 
 `main()` → `mcp.run(transport="streamable-http", host=cfg.host, ...)` с
 дефолтом `host="0.0.0.0"` (`src/config.py:47`). Любой, кто видит порт:
 читает всю конфигурацию и дергает `reindex` (векторная/стоимостная DoS).
 FastMCP 4.x поддерживает `auth`.
 
-**Фикс:** токен-аутентификация либо запрет дефолтного хоста.
+**Фикс:** `auth_token` (env `ONEC_AUTH_TOKEN`) → `StaticTokenVerifier` в
+`FastMCP(auth=...)`; пустое значение отключает auth. Проверено end-to-end:
+без/с неверным токеном — 401, с верным — запрос проходит.
 
 ---
 

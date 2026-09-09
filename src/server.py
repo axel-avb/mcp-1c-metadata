@@ -16,6 +16,7 @@ Transport: streamable HTTP (FastMCP 4.x).
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any
 
 from fastmcp import FastMCP
@@ -54,6 +55,40 @@ class App:
         self.reranker = Reranker(cfg.reranker)
 
 
+class _ReindexState:
+    """Thread-safe status for background reindexing."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.running = False
+        self.status = "idle"
+        self.stats: dict | None = None
+        self.error: str = ""
+
+    def start(self) -> None:
+        with self._lock:
+            self.running = True
+            self.status = "running"
+            self.stats = None
+            self.error = ""
+
+    def finish(self, stats: dict | None, error: str) -> None:
+        with self._lock:
+            self.running = False
+            self.status = "failed" if error else "done"
+            self.stats = stats
+            self.error = error
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "running": self.running,
+                "status": self.status,
+                "stats": self.stats,
+                "error": self.error,
+            }
+
+
 def _fmt_node(n: dict[str, Any], with_body: bool = False) -> str:
     p = n.get("props") or {}
     lines = [f"{n.get('kind', '')} {n.get('name', '')}"]
@@ -79,9 +114,19 @@ def _fmt_node(n: dict[str, Any], with_body: bool = False) -> str:
 def build_server(cfg: AppConfig | None = None) -> FastMCP:
     cfg = cfg or load_config()
     app = App(cfg)
+    reindex_state = _ReindexState()
+
+    auth = None
+    if cfg.auth_token:
+        from fastmcp.server.auth import StaticTokenVerifier
+
+        auth = StaticTokenVerifier(
+            tokens={cfg.auth_token: {"client_id": "onec", "scopes": []}}
+        )
 
     mcp = FastMCP(
         name="1c-configuration",
+        auth=auth,
         instructions=(
             "MCP server for browsing a 1C:Enterprise configuration exported to XML/BSL sources. "
             "Use list_objects to see the object tree, get_object_elements to drill into an object, "
@@ -336,15 +381,45 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
 
     @mcp.tool
     def reindex(full: bool = False) -> str:
-        """Rebuild the index from the configuration sources.
+        """Rebuild the index from the configuration sources in the background.
+
+        The rebuild runs in a background thread so a full re-embed of a large
+        configuration does not block the MCP request. Poll `reindex_status`
+        for progress and completion.
 
         Args:
             full: full rebuild; otherwise incremental (only changed files).
         """
+        if reindex_state.running:
+            return "Reindex already in progress. Poll reindex_status for completion."
+
         from .indexer import run_index
 
-        stats = run_index(cfg, full=full)
-        return f"Index complete: {stats}"
+        reindex_state.start()
+
+        def worker() -> None:
+            stats = None
+            error = ""
+            try:
+                stats = run_index(cfg, full=full)
+            except Exception as e:  # noqa: BLE001 — surface failure via status
+                error = f"{type(e).__name__}: {e}"
+            reindex_state.finish(stats, error)
+
+        threading.Thread(target=worker, daemon=True).start()
+        return "Reindex started in background. Poll reindex_status for completion."
+
+    @mcp.tool
+    def reindex_status() -> str:
+        """Show the status of the background reindex job."""
+        s = reindex_state.snapshot()
+        if s["status"] == "idle":
+            return "No reindex has been run yet."
+        if s["status"] == "running":
+            return "Reindex in progress..."
+        if s["status"] == "failed":
+            return f"Reindex failed: {s['error']}"
+        return f"Reindex complete: {s['stats']}"
 
     @mcp.tool
     def graph_stats() -> str:

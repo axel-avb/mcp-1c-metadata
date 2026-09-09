@@ -8,7 +8,7 @@
   },
   "graph_db_path": "./data/graph.sqlite3",
   "embedder": {
-    "base_url": "http://192.168.31.31:8081/v1",
+    "base_url": "http://192.168.31.34:8081/v1",
     "api_key": "no-key-needed",
     "model": "jina-code-embeddings-1.5b-GGUF",
     "dimensions": 1536,

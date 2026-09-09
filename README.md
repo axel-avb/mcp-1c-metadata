@@ -65,6 +65,7 @@ pip install -r requirements.txt
 ```json
 {
   "config_root": "/path/to/onec/sources",
+  "project_data_dir": "/path/to/onec/project-export",
   "qdrant": { "url": "http://localhost:6333", "collection": "onec_config" },
   "graph_db_path": "./data/graph.sqlite3",
   "embedder": {
@@ -81,9 +82,14 @@ pip install -r requirements.txt
   },
   "search": { "top_k": 5, "candidate_multiplier": 4 },
   "host": "0.0.0.0",
-  "port": 8765
+  "port": 8765,
+  "auth_token": ""
 }
 ```
+
+Если `auth_token` (или `ONEC_AUTH_TOKEN`) задан, сервер требует заголовок
+`Authorization: Bearer <token>` на всех HTTP-запросах. Пустое значение —
+аутентификация отключена.
 
 ### Переменные окружения
 
@@ -105,6 +111,7 @@ pip install -r requirements.txt
 | `ONEC_SEARCH_TOP_K` | Сколько результатов возвращать |
 | `ONEC_HOST` | Адрес HTTP-сервера (по умолчанию 0.0.0.0) |
 | `ONEC_PORT` | Порт HTTP-сервера (по умолчанию: 8765) |
+| `ONEC_AUTH_TOKEN` | Токен аутентификации: если задан, требуется заголовок `Authorization: Bearer <token>` |
 
 Полный точный список — в `_ENV_MAP` в `src/config.py`.
 
@@ -174,7 +181,8 @@ python -m src.server
 | `get_callers(name, object_name?)` | Кто вызывает данную процедуру (входные рёбра графа вызовов) |
 | `get_callees(name, object_name?)` | Что вызывает данная процедура (выходные рёбра) |
 | `get_references(object_name, direction="both")` | Ссылки на объект и от объекта (типы данных реквизитов) |
-| `reindex(full=false)` | Пересбор индекса прямо из MCP-инструмента |
+| `reindex(full=false)` | Пересбор индекса в фоновом потоке (не блокирует MCP-запрос) |
+| `reindex_status` | Статус фоновой переиндексации (idle/running/done/failed) |
 | `graph_stats` | Статистика графа: узлы/рёбра по видам |
 
 Примеры вызовов (что видит LLM-агент):
@@ -204,11 +212,14 @@ get_callers(name="РассчитатьСуммуРеализации")
 {
   "mcpServers": {
     "1c": {
-      "url": "http://localhost:8765/mcp"
+      "url": "http://localhost:8765/mcp",
+      "headers": { "Authorization": "Bearer <token>" }
     }
   }
 }
 ```
+
+Заголовок `headers` нужен только если задан `auth_token`.
 
 ### Python (FastMCP Client)
 
