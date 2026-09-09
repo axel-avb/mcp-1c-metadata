@@ -49,6 +49,11 @@ CREATE TABLE IF NOT EXISTS node_hashes (
     node_id TEXT PRIMARY KEY,
     hash    TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 
@@ -260,6 +265,19 @@ class GraphStore:
             for r in cur.fetchall():
                 out[f"edge:{r['kind']}"] = r["c"]
         return out
+
+    def get_meta(self, key: str) -> str | None:
+        with self._lock:
+            cur = self.conn.execute("SELECT value FROM meta WHERE key = ?", (key,))
+            row = cur.fetchone()
+            return row[0] if row else None
+
+    def set_meta(self, key: str, value: str) -> None:
+        with self._lock:
+            self.conn.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, value)
+            )
+            self.conn.commit()
 
     def close(self) -> None:
         with self._lock:

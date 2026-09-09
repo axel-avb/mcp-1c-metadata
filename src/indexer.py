@@ -19,15 +19,14 @@ from pathlib import Path
 
 from .bs_parser import parse_bs_file, infer_module_role
 from .config import AppConfig, load_config
-# DEPRECATED: config_parser (XML) will be replaced by a new parser.
 from .config_parser import (
     ConfigElement,
     ConfigObject,
     element_text_repr,
     object_text_repr,
-    parse_config_root,
     stable_id,
 )
+from .report_parser import parse_report
 from .embedder import Embedder
 from .graph import GraphStore
 
@@ -53,10 +52,19 @@ def _element_id(obj: ConfigObject, elem: ConfigElement, path: str) -> str:
     return stable_id("element", obj.node_id, f"{path}/{elem.name}", elem.elem_type)
 
 
+def _file_checksum(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def collect_graph(cfg: AppConfig):
-    """Parse XML + BSL. Returns (nodes, edges, hashes, embedding_items, n_objects, n_bsl)."""
-    objects = parse_config_root(cfg.config_root)
-    log.info("parsed %d configuration objects from %s", len(objects), cfg.config_root)
+    """Parse report + BSL. Returns (nodes, edges, hashes, embedding_items, n_objects, n_bsl)."""
+    report_path = cfg.project_data_dir / "metadata" / "ОтчетПоКонфигурации.txt"
+    objects = parse_report(report_path)
+    log.info("parsed %d configuration objects from %s", len(objects), report_path)
 
     nodes: list[dict] = []
     edges: list[tuple[str, str, str]] = []
@@ -189,9 +197,19 @@ def ensure_collection(client, cfg: AppConfig) -> None:
 def run_index(cfg: AppConfig, full: bool = False, no_vectors: bool = False) -> dict:
     from qdrant_client import QdrantClient, models
 
-    nodes, edges, hashes, embed_items, n_objects, n_bsl = collect_graph(cfg)
-
+    report_path = cfg.project_data_dir / "metadata" / "ОтчетПоКонфигурации.txt"
     graph = GraphStore(cfg.graph_db_path)
+
+    # Checksum gate: skip if report unchanged and not --full
+    if not full and report_path.is_file():
+        current_sum = _file_checksum(report_path)
+        stored_sum = graph.get_meta("config_checksum")
+        if stored_sum == current_sum:
+            log.info("report unchanged (checksum match), skipping rebuild")
+            graph.close()
+            return {"skipped": True, "reason": "checksum_match"}
+
+    nodes, edges, hashes, embed_items, n_objects, n_bsl = collect_graph(cfg)
     prev_hashes = {} if full else graph.get_node_hashes()
     changed = [it for it in embed_items if prev_hashes.get(it.node_id) != hashes.get(it.node_id)]
     log.info(
@@ -204,6 +222,8 @@ def run_index(cfg: AppConfig, full: bool = False, no_vectors: bool = False) -> d
     keep_ids = {n["id"] for n in nodes} | set(hashes.keys())
     dropped = graph.delete_stale_nodes(keep_ids)
     graph.set_node_hashes(hashes)
+    if report_path.is_file():
+        graph.set_meta("config_checksum", _file_checksum(report_path))
 
     stats = {"objects": n_objects, "bsl_files": n_bsl, "nodes": len(nodes),
              "edges": len(edges), "vectors_total": len(embed_items),

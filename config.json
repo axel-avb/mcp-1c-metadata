@@ -1,0 +1,28 @@
+{
+  "config_root": "./data/AKADA/metadata",
+  "project_data_dir": "./data/AKADA",
+  "qdrant": {
+    "url": "http://192.168.31.31:6333",
+    "api_key": "",
+    "collection": "onec_config"
+  },
+  "graph_db_path": "./data/graph.sqlite3",
+  "embedder": {
+    "base_url": "http://192.168.31.31:8081/v1",
+    "api_key": "no-key-needed",
+    "model": "jina-code-embeddings-1.5b-GGUF",
+    "dimensions": 1536,
+    "batch_size": 32
+  },
+  "reranker": {
+    "endpoint": "",
+    "api_key": "",
+    "model": ""
+  },
+  "search": {
+    "top_k": 5,
+    "candidate_multiplier": 4
+  },
+  "host": "0.0.0.0",
+  "port": 8765
+}

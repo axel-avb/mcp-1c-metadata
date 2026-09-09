@@ -48,6 +48,7 @@ class SearchConfig:
 @dataclass
 class AppConfig:
     config_root: Path = Path(".")  # root of the 1C configuration sources (XML/BS export)
+    project_data_dir: Path = Path("./data/AKADA")  # project export directory (metadata/, code/)
     qdrant_url: str = "http://localhost:6333"
     qdrant_api_key: str = ""
     qdrant_collection: str = "onec_config"
@@ -72,6 +73,7 @@ class AppConfig:
 # env var -> (attribute path on AppConfig)
 _ENV_MAP: dict[str, tuple[str, ...]] = {
     "ONEC_CONFIG_ROOT": ("config_root",),
+    "ONEC_PROJECT_DATA_DIR": ("project_data_dir",),
     "ONEC_QDRANT_URL": ("qdrant_url",),
     "ONEC_QDRANT_API_KEY": ("qdrant_api_key",),
     "ONEC_QDRANT_COLLECTION": ("qdrant_collection",),
@@ -137,8 +139,8 @@ def _apply_json(cfg: AppConfig, data: dict[str, Any]) -> None:
         if key in data:
             setattr(obj, key, _coerce(data[key], type(getattr(obj, key))))
 
-    for key in ("config_root", "qdrant_url", "qdrant_api_key", "qdrant_collection",
-                "graph_db_path", "host", "port"):
+    for key in ("config_root", "project_data_dir", "qdrant_url", "qdrant_api_key",
+                "qdrant_collection", "graph_db_path", "host", "port"):
         put(cfg, key)
 
     if isinstance(data.get("qdrant"), dict):
