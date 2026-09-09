@@ -105,7 +105,7 @@ def _merge_manifest(objects: list[ConfigObject], cfg: AppConfig) -> dict[str, st
 def collect_graph(cfg: AppConfig):
     """Parse the .txt report (ФАЗА 0) + XML manifest + BSL.
 
-    Returns (nodes, edges, hashes, embedding_items, n_objects, n_bsl, flags).
+    Returns (nodes, edges, hashes, embedding_items, n_objects, n_bsl, flags, object_checksums).
     """
     report_path = cfg.resolve_txt_root() / "ОтчетПоКонфигурации.txt"
     objects = parse_report(report_path)
@@ -180,6 +180,7 @@ def collect_graph(cfg: AppConfig):
 
     symbol_ids_by_name: dict[str, list[str]] = {}
     parsed_modules = []  # (module_path, module) for the CALLS pass
+    bsl_hashes_by_obj: dict[str, list[str]] = {}  # object_name -> list of file hashes
 
     for f in bs_files:
         role, object_name = infer_module_role(f.parent, f.name)
@@ -188,6 +189,7 @@ def collect_graph(cfg: AppConfig):
         parsed_modules.append((f, module))
 
         rel = _rel_path(f, xml_root)
+        bsl_hashes_by_obj.setdefault(object_name, []).append(_file_checksum(f))
         mid = stable_id("module", rel)
         nodes.append({
             "id": mid, "kind": "module", "name": rel, "object_name": object_name,
@@ -235,7 +237,15 @@ def collect_graph(cfg: AppConfig):
                     seen_calls.add(key)
                     edges.append((sid, target, "CALLS"))
 
-    return nodes, edges, hashes, embed_items, len(objects), len(bs_files), flags
+    # object-level checksums: sha256(source_key ∥ config_version ∥ bsl_hashes)
+    object_checksums: dict[str, str] = {}
+    for obj in objects:
+        bsl_hashes = bsl_hashes_by_obj.get(obj.name, [])
+        object_checksums[obj.source_key] = _hash(
+            obj.source_key, obj.config_version, "\n".join(bsl_hashes)
+        )
+
+    return nodes, edges, hashes, embed_items, len(objects), len(bs_files), flags, object_checksums
 
 
 def _rel_path(f: Path, base: Path) -> str:
@@ -243,6 +253,70 @@ def _rel_path(f: Path, base: Path) -> str:
         return str(f.relative_to(base))
     except ValueError:
         return str(f)
+
+
+def _filter_object(
+    nodes: list[dict],
+    edges: list[tuple[str, str, str]],
+    hashes: dict[str, str],
+    embed_items: list[EmbeddingItem],
+    object_checksums: dict[str, str],
+    name: str,
+):
+    """Keep only nodes/edges belonging to a single object.
+
+    `name` may be the Russian full/short name (Справочник.Колледжи / Колледжи)
+    or the English source_key (Catalog.Колледжи).
+    """
+    obj_id = None
+    for n in nodes:
+        if n["kind"] != "object":
+            continue
+        p = n.get("props") or {}
+        if name in (n["name"], n["object_name"], p.get("source_key", "")):
+            obj_id = n["id"]
+            break
+    if obj_id is None:
+        # short-name match
+        for n in nodes:
+            if n["kind"] != "object":
+                continue
+            if n["name"].split(".", 1)[-1] == name:
+                obj_id = n["id"]
+                break
+    if obj_id is None:
+        return [], [], {}, [], {}
+
+    keep_ids = {obj_id}
+    # Which edge kinds stay within a single object vs cross-object references.
+    # REFERENCE/USES/CALLS point to other objects/symbols and must be excluded
+    # from a single-object reindex.
+    _LOCAL_EDGES = {"HAS_ELEMENT", "CHILD_ELEMENT", "DEFINES", "HAS_MODULE"}
+    edge_map: dict[str, list[tuple[str, str, str]]] = {}
+    for e in edges:
+        if e[2] in _LOCAL_EDGES:
+            edge_map.setdefault(e[0], []).append(e)
+    seen = set()
+    frontier = [obj_id]
+    while frontier:
+        nxt = []
+        for src in frontier:
+            for e in edge_map.get(src, []):
+                if e not in seen:
+                    seen.add(e)
+                    keep_ids.add(e[1])
+                    nxt.append(e[1])
+        frontier = nxt
+
+    nodes2 = [n for n in nodes if n["id"] in keep_ids]
+    edges2 = [e for e in edges if e in seen]
+    ids = {n["id"] for n in nodes2}
+    hashes2 = {k: v for k, v in hashes.items() if k in ids}
+    embed_items2 = [it for it in embed_items if it.node_id in ids]
+    obj_node = next((n for n in nodes2 if n["id"] == obj_id), None)
+    sk = (obj_node or {}).get("props", {}).get("source_key", "")
+    checks2 = {sk: object_checksums[sk]} if sk in object_checksums else {}
+    return nodes2, edges2, hashes2, embed_items2, checks2
 
 
 def ensure_collection(client, cfg: AppConfig) -> None:
@@ -257,14 +331,15 @@ def ensure_collection(client, cfg: AppConfig) -> None:
         log.info("created Qdrant collection %s (dim=%d)", cfg.qdrant_collection, dim)
 
 
-def run_index(cfg: AppConfig, full: bool = False, no_vectors: bool = False) -> dict:
+def run_index(cfg: AppConfig, full: bool = False, no_vectors: bool = False,
+              object_filter: str | None = None) -> dict:
     from qdrant_client import QdrantClient, models
 
     report_path = cfg.resolve_txt_root() / "ОтчетПоКонфигурации.txt"
     graph = GraphStore(cfg.graph_db_path)
 
-    # Checksum gate: skip if report unchanged and not --full
-    if not full and report_path.is_file():
+    # Checksum gate: skip if report unchanged and not --full and not targeted
+    if not full and object_filter is None and report_path.is_file():
         current_sum = _file_checksum(report_path)
         stored_sum = graph.get_meta("config_checksum")
         if stored_sum == current_sum:
@@ -272,7 +347,15 @@ def run_index(cfg: AppConfig, full: bool = False, no_vectors: bool = False) -> d
             graph.close()
             return {"skipped": True, "reason": "checksum_match"}
 
-    nodes, edges, hashes, embed_items, n_objects, n_bsl, flags = collect_graph(cfg)
+    nodes, edges, hashes, embed_items, n_objects, n_bsl, flags, object_checksums = collect_graph(cfg)
+
+    if object_filter:
+        nodes, edges, hashes, embed_items, object_checksums = _filter_object(
+            nodes, edges, hashes, embed_items, object_checksums, object_filter
+        )
+        if not nodes:
+            log.warning("--object %r matched no objects", object_filter)
+
     prev_hashes = {} if full else graph.get_node_hashes()
     changed = [it for it in embed_items if prev_hashes.get(it.node_id) != hashes.get(it.node_id)]
     log.info(
@@ -282,8 +365,13 @@ def run_index(cfg: AppConfig, full: bool = False, no_vectors: bool = False) -> d
 
     graph.upsert_nodes(nodes)
     graph.upsert_edges(edges)
-    keep_ids = {n["id"] for n in nodes} | set(hashes.keys())
-    dropped = graph.delete_stale_nodes(keep_ids)
+    if object_filter:
+        # Targeted reindex: only update/delete the object's own nodes, never
+        # sweep the whole graph (would drop every unrelated object).
+        dropped = []
+    else:
+        keep_ids = {n["id"] for n in nodes} | set(hashes.keys())
+        dropped = graph.delete_stale_nodes(keep_ids)
 
     stats = {"objects": n_objects, "bsl_files": n_bsl, "nodes": len(nodes),
              "edges": len(edges), "vectors_total": len(embed_items),
@@ -338,6 +426,9 @@ def run_index(cfg: AppConfig, full: bool = False, no_vectors: bool = False) -> d
         # aware of the current content (otherwise it would re-embed everything).
         graph.set_node_hashes(hashes)
 
+    # Persist object checksums only after a successful build (metadata + bsl).
+    graph.set_object_checksums(object_checksums)
+
     if report_path.is_file():
         graph.set_meta("config_checksum", _file_checksum(report_path))
 
@@ -350,11 +441,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", default=None, help="path to config.json")
     parser.add_argument("--full", action="store_true", help="full rebuild (ignore stored hashes)")
     parser.add_argument("--no-vectors", action="store_true", help="skip embedding step")
+    parser.add_argument("--object", default=None,
+                        help="reindex a single object (Russian or English name, e.g. Справочник.Колледжи or Catalog.Колледжи)")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     cfg = load_config(args.config)
-    stats = run_index(cfg, full=args.full, no_vectors=args.no_vectors)
+    stats = run_index(cfg, full=args.full, no_vectors=args.no_vectors, object_filter=args.object)
     print("Index complete:", stats)
     return 0
 

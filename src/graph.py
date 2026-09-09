@@ -50,6 +50,12 @@ CREATE TABLE IF NOT EXISTS node_hashes (
     hash    TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS object_checksums (
+    source_key TEXT PRIMARY KEY,
+    checksum   TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -105,6 +111,26 @@ class GraphStore:
         with self._lock:
             cur = self.conn.execute("SELECT node_id, hash FROM node_hashes")
             return {r[0]: r[1] for r in cur.fetchall()}
+
+    def set_object_checksums(self, checksums: dict[str, str]) -> None:
+        with self._lock:
+            now = __import__("time").strftime("%Y-%m-%dT%H:%M:%S")
+            self.conn.executemany(
+                "INSERT OR REPLACE INTO object_checksums (source_key, checksum, updated_at) "
+                "VALUES (?, ?, ?)",
+                [(k, v, now) for k, v in checksums.items()],
+            )
+            self.conn.commit()
+
+    def get_object_checksums(self) -> dict[str, str]:
+        with self._lock:
+            cur = self.conn.execute("SELECT source_key, checksum FROM object_checksums")
+            return {r[0]: r[1] for r in cur.fetchall()}
+
+    def clear_object_checksums(self) -> None:
+        with self._lock:
+            self.conn.execute("DELETE FROM object_checksums")
+            self.conn.commit()
 
     def delete_stale_nodes(self, keep_ids: set[str]) -> list[str]:
         """Delete nodes (and their edges/hashes) not in keep_ids. Returns dropped IDs."""
