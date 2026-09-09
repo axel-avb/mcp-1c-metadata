@@ -1,0 +1,36 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.19.0
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/6333 && echo -e 'GET /healthz HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q ok <&3"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  mcp:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      # override the .env default so the container talks to the sibling service
+      ONEC_QDRANT_URL: http://qdrant:6333
+    ports:
+      - "8765:8765"
+    volumes:
+      # 1C configuration sources (XML + BSL) — read-only
+      - ${ONEC_CONFIG_HOST_PATH:-./tests/sample_config}:/data/config:ro
+      # persistent SQLite graph
+      - mcp_data:/data
+
+volumes:
+  qdrant_data:
+  mcp_data:
