@@ -31,6 +31,7 @@ from .embedder import Embedder
 from .graph import GraphStore
 from .xml_manifest import parse_dumpinfo, source_key_for
 from .xml_config import parse_configuration
+from .xml_object import object_is_legacy
 
 log = logging.getLogger(__name__)
 
@@ -154,17 +155,20 @@ def collect_graph(cfg: AppConfig):
     for obj in objects:
         oid = obj_by_name[obj.name]
         text = object_text_repr(obj)
+        legacy = _object_legacy(cfg, obj, global_legacy)
         nodes.append({
             "id": oid, "kind": "object", "name": obj.name, "object_name": obj.name,
             "type": obj.type,
             "props": {"synonym": obj.synonym, "comment": obj.comment,
                       "source_key": obj.source_key,
                       "english_type": obj.english_type,
-                      "config_version": obj.config_version},
+                      "config_version": obj.config_version,
+                      "is_legacy": legacy},
         })
         hashes[oid] = _hash("object", text)
         payload = {"kind": "object", "name": obj.name, "type": obj.type,
-                   "synonym": obj.synonym, "comment": obj.comment}
+                   "synonym": obj.synonym, "comment": obj.comment,
+                   "is_legacy": legacy}
         if obj.source_key:
             payload["source_key"] = obj.source_key
         embed_items.append(EmbeddingItem(oid, text, payload=payload))
@@ -253,6 +257,20 @@ def _rel_path(f: Path, base: Path) -> str:
         return str(f.relative_to(base))
     except ValueError:
         return str(f)
+
+
+def _object_legacy(cfg: AppConfig, obj: ConfigObject, global_legacy: bool) -> bool:
+    """Decide is_legacy for one object from its Form files + global run mode."""
+    if not obj.source_key:
+        return global_legacy
+    # source_key "Catalog.Колледжи" -> folder "Catalogs/Колледжи"
+    from .xml_manifest import folder_for_type
+    folder = folder_for_type(obj.english_type or obj.source_key.split(".", 1)[0])
+    short = obj.source_key.split(".", 1)[-1]
+    obj_dir = cfg.resolve_xml_root() / folder / short
+    if not obj_dir.is_dir():
+        return global_legacy
+    return object_is_legacy(obj_dir, global_legacy)
 
 
 def _filter_object(

@@ -18,10 +18,13 @@ Edges:
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import threading
 from pathlib import Path
 from typing import Any, Iterable
+
+log = logging.getLogger(__name__)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS nodes (
@@ -62,6 +65,11 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 """
 
+# Migrations for pre-existing databases (additive, idempotent).
+_MIGRATIONS = [
+    "ALTER TABLE nodes ADD COLUMN is_legacy INTEGER NOT NULL DEFAULT 0",
+]
+
 
 class GraphStore:
     def __init__(self, path: str | Path):
@@ -72,20 +80,34 @@ class GraphStore:
         self.conn.row_factory = sqlite3.Row
         with self._lock:
             self.conn.executescript(SCHEMA)
+            self._migrate()
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_nodes_legacy ON nodes(is_legacy)"
+            )
             self.conn.commit()
+
+    def _migrate(self) -> None:
+        cols = {r[1] for r in self.conn.execute("PRAGMA table_info(nodes)")}
+        if "is_legacy" not in cols:
+            for stmt in _MIGRATIONS:
+                try:
+                    self.conn.execute(stmt)
+                except sqlite3.OperationalError as e:
+                    log.warning("migration skipped: %s", e)
 
     # ------------------------------------------------------------- writes ---
 
     def upsert_nodes(self, nodes: Iterable[dict[str, Any]]) -> None:
         rows = [
             (n["id"], n["kind"], n.get("name", ""), n.get("object_name", ""),
-             n.get("type", ""), json.dumps(n.get("props", {}), ensure_ascii=False))
+             n.get("type", ""), json.dumps(n.get("props", {}), ensure_ascii=False),
+             1 if (n.get("props") or {}).get("is_legacy") else 0)
             for n in nodes
         ]
         with self._lock:
             self.conn.executemany(
-                "INSERT OR REPLACE INTO nodes (id, kind, name, object_name, type, props) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO nodes (id, kind, name, object_name, type, props, is_legacy) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 rows,
             )
             self.conn.commit()
