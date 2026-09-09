@@ -258,13 +258,21 @@ def _build_object(
             if child_first_seg == first_segment and obj_short_name in child_name:
                 # This is an element of our object
                 # Determine elem_type from the segment between object name and element name
+                # Path after the object name alternates container/name, e.g.
+                #   Реквизиты.ТипОрганизации                    -> attribute
+                #   ТабличныеЧасти.Конкуренты.Реквизиты.ВУЗ     -> attribute inside a tabular section
                 rest = child_name[len(first_segment) + 1 + len(obj_short_name) + 1:]
-                # rest is like "Реквизиты.ТипОрганизации" or "Реквизиты"
-                parts = rest.split(".", 1)
-                container_seg = parts[0]
-                elem_name = parts[1] if len(parts) > 1 else ""
+                segs = rest.split(".")
+                elem_name = segs[-1]
 
-                elem_type = _ELEM_TYPE_MAP.get(container_seg, container_seg)
+                # type comes from the last known container segment in the path
+                elem_type = ""
+                for seg in reversed(segs[:-1]):
+                    if seg in _ELEM_TYPE_MAP:
+                        elem_type = _ELEM_TYPE_MAP[seg]
+                        break
+                if not elem_type:
+                    elem_type = segs[-2] if len(segs) > 1 else ""
 
                 # Close multi-list if open
                 if multi_list is not None:
@@ -278,18 +286,14 @@ def _build_object(
                     elem_type=elem_type,
                 )
 
-                # Determine parent: direct child of object or nested
-                if not elem_stack or indent <= elem_stack[-1][0]:
-                    # Direct child of object
-                    obj.elements.append(elem)
+                # Pop stack entries at this indent or deeper; the parent is
+                # whatever remains on top (or the object itself when empty).
+                while elem_stack and elem_stack[-1][0] >= indent:
+                    elem_stack.pop()
+                if elem_stack:
+                    elem_stack[-1][1].children.append(elem)
                 else:
-                    # Find parent element
-                    parent = obj.elements
-                    for e_indent, e_elem in reversed(elem_stack):
-                        if indent > e_indent:
-                            parent = e_elem.children
-                            break
-                    parent.append(elem)
+                    obj.elements.append(elem)
 
                 elem_stack.append((indent, elem))
                 current_elem = elem

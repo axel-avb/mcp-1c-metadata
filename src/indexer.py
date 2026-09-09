@@ -221,9 +221,6 @@ def run_index(cfg: AppConfig, full: bool = False, no_vectors: bool = False) -> d
     graph.upsert_edges(edges)
     keep_ids = {n["id"] for n in nodes} | set(hashes.keys())
     dropped = graph.delete_stale_nodes(keep_ids)
-    graph.set_node_hashes(hashes)
-    if report_path.is_file():
-        graph.set_meta("config_checksum", _file_checksum(report_path))
 
     stats = {"objects": n_objects, "bsl_files": n_bsl, "nodes": len(nodes),
              "edges": len(edges), "vectors_total": len(embed_items),
@@ -256,6 +253,9 @@ def run_index(cfg: AppConfig, full: bool = False, no_vectors: bool = False) -> d
                     for it, v in zip(chunk, vectors)
                 ]
                 client.upsert(collection_name=cfg.qdrant_collection, points=points, wait=True)
+                # Mark this batch as embedded only after a successful upsert,
+                # so an interrupted run resumes at the right place next time.
+                graph.set_node_hashes({it.node_id: hashes[it.node_id] for it in chunk})
                 done += len(points)
                 stats["vectors_updated"] = done
                 elapsed = time.monotonic() - t0
@@ -269,6 +269,14 @@ def run_index(cfg: AppConfig, full: bool = False, no_vectors: bool = False) -> d
             print()
             embedder.close()
         client.close()
+
+    if no_vectors:
+        # No vectors produced: still record hashes so a later vector run is
+        # aware of the current content (otherwise it would re-embed everything).
+        graph.set_node_hashes(hashes)
+
+    if report_path.is_file():
+        graph.set_meta("config_checksum", _file_checksum(report_path))
 
     graph.close()
     return stats
