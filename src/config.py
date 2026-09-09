@@ -49,6 +49,8 @@ class SearchConfig:
 class AppConfig:
     config_root: Path = Path(".")  # root of the 1C configuration sources (XML/BS export)
     project_data_dir: Path = Path("./data/AKADA")  # project export directory (metadata/, code/)
+    xml_root: Path | None = None  # root of the XML dump (ConfigDumpInfo.xml + per-object); default project_data_dir/code
+    txt_root: Path | None = None  # root of the TXT report (ОтчетПоКонфигурации.txt); default project_data_dir/metadata
     qdrant_url: str = "http://localhost:6333"
     qdrant_api_key: str = ""
     qdrant_collection: str = "onec_config"
@@ -61,20 +63,24 @@ class AppConfig:
     auth_token: str = ""  # if set, requires "Authorization: Bearer <token>" on HTTP
 
     def validate(self) -> None:
-        if not self.config_root.is_dir():
-            raise ConfigError(
-                f"config_root does not exist or is not a directory: {self.config_root}"
-            )
         if not self.qdrant_url:
             raise ConfigError("qdrant.url is required")
         if not self.embedder.base_url:
             raise ConfigError("embedder.base_url is required (OpenAI-compatible /embeddings)")
+
+    def resolve_xml_root(self) -> Path:
+        return self.xml_root if self.xml_root is not None else (self.project_data_dir / "code")
+
+    def resolve_txt_root(self) -> Path:
+        return self.txt_root if self.txt_root is not None else (self.project_data_dir / "metadata")
 
 
 # env var -> (attribute path on AppConfig)
 _ENV_MAP: dict[str, tuple[str, ...]] = {
     "ONEC_CONFIG_ROOT": ("config_root",),
     "ONEC_PROJECT_DATA_DIR": ("project_data_dir",),
+    "ONEC_XML_ROOT": ("xml_root",),
+    "ONEC_TXT_ROOT": ("txt_root",),
     "ONEC_QDRANT_URL": ("qdrant_url",),
     "ONEC_QDRANT_API_KEY": ("qdrant_api_key",),
     "ONEC_QDRANT_COLLECTION": ("qdrant_collection",),
@@ -141,7 +147,8 @@ def _apply_json(cfg: AppConfig, data: dict[str, Any]) -> None:
         if key in data:
             setattr(obj, key, _coerce(data[key], type(getattr(obj, key))))
 
-    for key in ("config_root", "project_data_dir", "qdrant_url", "qdrant_api_key",
+    for key in ("config_root", "project_data_dir", "xml_root", "txt_root",
+                "qdrant_url", "qdrant_api_key",
                 "qdrant_collection", "graph_db_path", "host", "port", "auth_token"):
         put(cfg, key)
 

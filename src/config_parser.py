@@ -152,6 +152,12 @@ class ConfigObject:
     folder: Path | None = None
     elements: list[ConfigElement] = field(default_factory=list)
     module_files: dict[str, Path] = field(default_factory=dict)  # role -> path
+    # Supplemented by the XML manifest layer (empty when only the .txt report
+    # is present):
+    source_key: str = ""         # "Catalog.Номенклатура"
+    english_type: str = ""       # "Catalog"
+    config_version: str = ""     # 1C configVersion checksum
+    is_legacy: bool | None = None  # ordinary (legacy) vs managed form mode
 
     @property
     def node_id(self) -> str:

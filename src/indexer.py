@@ -29,6 +29,8 @@ from .config_parser import (
 from .report_parser import parse_report
 from .embedder import Embedder
 from .graph import GraphStore
+from .xml_manifest import parse_dumpinfo, source_key_for
+from .xml_config import parse_configuration
 
 log = logging.getLogger(__name__)
 
@@ -60,11 +62,57 @@ def _file_checksum(path: Path) -> str:
     return h.hexdigest()
 
 
+def _merge_manifest(objects: list[ConfigObject], cfg: AppConfig) -> dict[str, str]:
+    """Enrich txt-derived objects with XML-manifest metadata.
+
+    Merges by source_key (English object name). The .txt report stays the
+    source of truth for names/synonyms; the manifest adds source_key,
+    english_type, config_version and id.
+
+    Returns the global flags from Configuration.xml (for is_legacy detection).
+    """
+    xml_root = cfg.resolve_xml_root()
+    manifest = parse_dumpinfo(xml_root / "ConfigDumpInfo.xml")
+    flags = parse_configuration(xml_root)
+
+    if not manifest:
+        log.info("no XML manifest at %s; indexing txt layer only", xml_root)
+        return flags
+
+    matched = 0
+    for obj in objects:
+        sk = source_key_for(obj.type, obj.short_name)
+        info = manifest.get(sk)
+        if info is None:
+            # maybe the txt used a different short-name casing; try name-based
+            for msk, minfo in manifest.items():
+                if msk.split(".", 1)[-1].lower() == obj.short_name.lower():
+                    info = minfo
+                    sk = msk
+                    break
+        if info is not None:
+            obj.source_key = sk
+            obj.english_type = info["english_type"]
+            obj.config_version = info["config_version"]
+            matched += 1
+        else:
+            obj.source_key = sk  # best-effort source_key even without manifest entry
+
+    log.info("manifest enrich: %d/%d objects matched", matched, len(objects))
+    return flags
+
+
 def collect_graph(cfg: AppConfig):
-    """Parse report + BSL. Returns (nodes, edges, hashes, embedding_items, n_objects, n_bsl)."""
-    report_path = cfg.project_data_dir / "metadata" / "ОтчетПоКонфигурации.txt"
+    """Parse the .txt report (ФАЗА 0) + XML manifest + BSL.
+
+    Returns (nodes, edges, hashes, embedding_items, n_objects, n_bsl, flags).
+    """
+    report_path = cfg.resolve_txt_root() / "ОтчетПоКонфигурации.txt"
     objects = parse_report(report_path)
     log.info("parsed %d configuration objects from %s", len(objects), report_path)
+
+    flags = _merge_manifest(objects, cfg)
+    global_legacy = flags.get("run_mode") == "ordinary"
 
     nodes: list[dict] = []
     edges: list[tuple[str, str, str]] = []
@@ -109,19 +157,25 @@ def collect_graph(cfg: AppConfig):
         nodes.append({
             "id": oid, "kind": "object", "name": obj.name, "object_name": obj.name,
             "type": obj.type,
-            "props": {"synonym": obj.synonym, "comment": obj.comment},
+            "props": {"synonym": obj.synonym, "comment": obj.comment,
+                      "source_key": obj.source_key,
+                      "english_type": obj.english_type,
+                      "config_version": obj.config_version},
         })
         hashes[oid] = _hash("object", text)
-        embed_items.append(EmbeddingItem(
-            oid, text,
-            payload={"kind": "object", "name": obj.name, "type": obj.type,
-                     "synonym": obj.synonym, "comment": obj.comment},
-        ))
+        payload = {"kind": "object", "name": obj.name, "type": obj.type,
+                   "synonym": obj.synonym, "comment": obj.comment}
+        if obj.source_key:
+            payload["source_key"] = obj.source_key
+        embed_items.append(EmbeddingItem(oid, text, payload=payload))
         for elem in obj.elements:
             add_element(obj, elem, oid, "HAS_ELEMENT", "")
 
     # ---- BSL modules, symbols, CALLS / USES --------------------------------
-    bs_files: list[Path] = sorted(cfg.config_root.rglob("*.bsl")) or sorted(cfg.config_root.rglob("*.bs"))
+    xml_root = cfg.resolve_xml_root()
+    bs_files: list[Path] = sorted(xml_root.rglob("*.bsl")) or sorted(xml_root.rglob("*.bs"))
+    if not bs_files:
+        bs_files = sorted(cfg.config_root.rglob("*.bsl")) or sorted(cfg.config_root.rglob("*.bs"))
     log.info("found %d BSL files", len(bs_files))
 
     symbol_ids_by_name: dict[str, list[str]] = {}
@@ -133,7 +187,7 @@ def collect_graph(cfg: AppConfig):
         module = parse_bs_file(f, module_role=role, object_name=object_name)
         parsed_modules.append((f, module))
 
-        rel = str(f.relative_to(cfg.config_root))
+        rel = _rel_path(f, xml_root)
         mid = stable_id("module", rel)
         nodes.append({
             "id": mid, "kind": "module", "name": rel, "object_name": object_name,
@@ -168,7 +222,7 @@ def collect_graph(cfg: AppConfig):
     # CALLS edges (symbol -> symbol, resolved by name in the global namespace)
     seen_calls: set[tuple[str, str]] = set()
     for f, module in parsed_modules:
-        rel = str(f.relative_to(cfg.config_root))
+        rel = _rel_path(f, xml_root)
         for sym in module.symbols:
             if not sym.calls:
                 continue
@@ -181,7 +235,14 @@ def collect_graph(cfg: AppConfig):
                     seen_calls.add(key)
                     edges.append((sid, target, "CALLS"))
 
-    return nodes, edges, hashes, embed_items, len(objects), len(bs_files)
+    return nodes, edges, hashes, embed_items, len(objects), len(bs_files), flags
+
+
+def _rel_path(f: Path, base: Path) -> str:
+    try:
+        return str(f.relative_to(base))
+    except ValueError:
+        return str(f)
 
 
 def ensure_collection(client, cfg: AppConfig) -> None:
@@ -199,7 +260,7 @@ def ensure_collection(client, cfg: AppConfig) -> None:
 def run_index(cfg: AppConfig, full: bool = False, no_vectors: bool = False) -> dict:
     from qdrant_client import QdrantClient, models
 
-    report_path = cfg.project_data_dir / "metadata" / "ОтчетПоКонфигурации.txt"
+    report_path = cfg.resolve_txt_root() / "ОтчетПоКонфигурации.txt"
     graph = GraphStore(cfg.graph_db_path)
 
     # Checksum gate: skip if report unchanged and not --full
@@ -211,7 +272,7 @@ def run_index(cfg: AppConfig, full: bool = False, no_vectors: bool = False) -> d
             graph.close()
             return {"skipped": True, "reason": "checksum_match"}
 
-    nodes, edges, hashes, embed_items, n_objects, n_bsl = collect_graph(cfg)
+    nodes, edges, hashes, embed_items, n_objects, n_bsl, flags = collect_graph(cfg)
     prev_hashes = {} if full else graph.get_node_hashes()
     changed = [it for it in embed_items if prev_hashes.get(it.node_id) != hashes.get(it.node_id)]
     log.info(
