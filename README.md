@@ -66,6 +66,8 @@ pip install -r requirements.txt
 {
   "config_root": "/path/to/onec/sources",
   "project_data_dir": "/path/to/onec/project-export",
+  "xml_root": "/path/to/onec/code",
+  "txt_root": "/path/to/onec/metadata",
   "qdrant": { "url": "http://localhost:6333", "collection": "onec_config" },
   "graph_db_path": "./data/graph.sqlite3",
   "embedder": {
@@ -83,7 +85,9 @@ pip install -r requirements.txt
   "search": { "top_k": 5, "candidate_multiplier": 4 },
   "host": "0.0.0.0",
   "port": 8765,
-  "auth_token": ""
+  "auth_token": "",
+  "payload_only": false,
+  "node_id_in_payload": true
 }
 ```
 
@@ -112,6 +116,10 @@ pip install -r requirements.txt
 | `ONEC_HOST` | Адрес HTTP-сервера (по умолчанию 0.0.0.0) |
 | `ONEC_PORT` | Порт HTTP-сервера (по умолчанию: 8765) |
 | `ONEC_AUTH_TOKEN` | Токен аутентификации: если задан, требуется заголовок `Authorization: Bearer <token>` |
+| `ONEC_XML_ROOT` | Корень XML-выгрузки (`ConfigDumpInfo.xml` + per-object XML); по умолчанию `project_data_dir/code` |
+| `ONEC_TXT_ROOT` | Корень TXT-отчёта (`ОтчетПоКонфигурации.txt`); по умолчанию `project_data_dir/metadata` |
+| `ONEC_PAYLOAD_ONLY` | `true` — обновлять только payload в Qdrant без переэмбеддинга |
+| `ONEC_NODE_ID_IN_PAYLOAD` | `true` (по умолчанию) — хранить `node_id` в payload Qdrant для `search_config` |
 
 Полный точный список — в `_ENV_MAP` в `src/config.py`.
 
@@ -150,6 +158,16 @@ python -m src.indexer --full
 
 # без векторов (только граф в SQLite) — для отладки парсеров
 python -m src.indexer --no-vectors
+
+# переиндексация одного объекта (русское или английское имя)
+python -m src.indexer --object Справочник.Колледжи
+python -m src.indexer --object Catalog.Колледжи
+
+# эмбеддить только один слой (object|element|symbol); граф остаётся в SQLite
+python -m src.indexer --kind symbol
+
+# обновить только payload в Qdrant без переэмбеддинга (после смены флагов)
+python -m src.indexer --payload-only
 
 # другой файл конфигурации
 python -m src.indexer --config /path/to/config.json
@@ -295,28 +313,11 @@ src/server.py (FastMCP, streamable HTTP :8765/mcp)
 ## Тесты
 
 ```bash
+# unit-тесты (парсеры/маппинг/легаси-флаг/чек-суммы)
+pytest tests/
+
 # компиляция всех модулей
 python -m compileall src
-
-# минимальный образец конфигурации для ручного прогона:
-# tests/sample_config/ (Config.xml + каталоги)
-ONEC_CONFIG_ROOT=tests/sample_config ONEC_EMBEDDER_BASE_URL=http://localhost:11434/v1 \
-  python -m src.indexer --no-vectors
-```
-
-## Структура проекта
-
-```
-src/config.py         загрузка конфигурации (JSON + env), валидация
-src/config_parser.py  парсер XML-метаданных конфигурации
-src/bs_parser.py      парсер BSL-модулей (процедуры, вызовы, ссылки)
-src/graph.py          SQLite-граф: схема, upsert, запросы соседей
-src/indexer.py        сборка графа + векторов, инкрементальность
-src/embedder.py       клиент эмбеддера (OpenAI-совместимый)
-src/reranker.py       клиент реранкера (Cohere/Jina-совместимый), fallback
-src/server.py         FastMCP-сервер: инструменты, streamable HTTP
-tests/sample_config/  минимальный образец конфигурации 1С
-data/                 SQLite-граф (создаётся при индексации)
 ```
 
 ## Ограничения
@@ -328,3 +329,10 @@ data/                 SQLite-граф (создаётся при индекса�
   кандидатов; инструмент `get_symbol` принимает `object_name` для уточнения.
 - Размерность вектора (`embedder.dimensions`) должна совпадать с моделью,
   иначе Qdrant отклонит upsert.
+- **Объекты вне `.txt`-отчёта** (бизнес-процессы, общие модули/формы, веб-сервисы
+  и др.) индексируются как module/symbol, но без object-узла и `HAS_MODULE`-связи
+  (см. `PLAN.md` §12).
+- **Легаси-формы** (`FormType=Ordinary`, бинарный `Form.bin`) не индексируются —
+  ждут внешний бинарный парсер (заглушка `parse_legacy_object`, phase-2).
+- **Qdrant RAM** — единственное реальное ограничение по объёму: ~6 КБ/вектор
+  (1536 dims float32), для ЕРП 2.x это десятки ГБ RAM (см. `PLAN.md` §12).

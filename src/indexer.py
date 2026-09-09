@@ -140,12 +140,12 @@ def collect_graph(cfg: AppConfig):
                       "parent": parent},
         })
         hashes[eid] = _hash("element", text)
-        embed_items.append(EmbeddingItem(
-            eid, text,
-            payload={"kind": "element", "name": elem.name, "object": obj.name,
-                     "type": elem.elem_type, "data_type": elem.data_type,
-                     "comment": elem.comment, "parent": parent},
-        ))
+        pl = {"kind": "element", "name": elem.name, "object": obj.name,
+              "type": elem.elem_type, "data_type": elem.data_type,
+              "comment": elem.comment, "parent": parent}
+        if cfg.node_id_in_payload:
+            pl["node_id"] = eid
+        embed_items.append(EmbeddingItem(eid, text, payload=pl))
         edges.append((parent_id, eid, edge_kind))
         if elem.ref_object and elem.ref_object in obj_by_name:
             edges.append((eid, obj_by_name[elem.ref_object], "REFERENCE"))
@@ -171,6 +171,8 @@ def collect_graph(cfg: AppConfig):
                    "is_legacy": legacy}
         if obj.source_key:
             payload["source_key"] = obj.source_key
+        if cfg.node_id_in_payload:
+            payload["node_id"] = oid
         embed_items.append(EmbeddingItem(oid, text, payload=payload))
         for elem in obj.elements:
             add_element(obj, elem, oid, "HAS_ELEMENT", "")
@@ -211,11 +213,14 @@ def collect_graph(cfg: AppConfig):
                           "body": sym.body},
             })
             hashes[sid] = _hash("symbol", sym.name, sym.body)
+            pl = {"kind": "symbol", "name": sym.name, "object": object_name,
+                  "visibility": sym.visibility, "line": sym.line, "module": rel}
+            if cfg.node_id_in_payload:
+                pl["node_id"] = sid
             embed_items.append(EmbeddingItem(
                 sid,
                 f"{sym.kind} {sym.name}({sym.params}) — {object_name}, модуль: {role}\n{sym.body}",
-                payload={"kind": "symbol", "name": sym.name, "object": object_name,
-                         "visibility": sym.visibility, "line": sym.line, "module": rel},
+                payload=pl,
             ))
             edges.append((mid, sid, "DEFINES"))
 
@@ -349,15 +354,92 @@ def ensure_collection(client, cfg: AppConfig) -> None:
         log.info("created Qdrant collection %s (dim=%d)", cfg.qdrant_collection, dim)
 
 
+def _payload_for(cfg: AppConfig, n: dict) -> dict | None:
+    p = n.get("props") or {}
+    kind = n["kind"]
+    if kind == "object":
+        payload = {"kind": "object", "name": n["name"], "type": n["type"],
+                   "synonym": p.get("synonym", ""), "comment": p.get("comment", ""),
+                   "is_legacy": bool(p.get("is_legacy"))}
+        if p.get("source_key"):
+            payload["source_key"] = p["source_key"]
+    elif kind == "element":
+        payload = {"kind": "element", "name": n["name"], "object": n["object_name"],
+                   "type": n["type"], "data_type": p.get("data_type", ""),
+                   "comment": p.get("comment", ""), "parent": p.get("parent", "")}
+    elif kind == "symbol":
+        payload = {"kind": "symbol", "name": n["name"], "object": n["object_name"],
+                   "visibility": p.get("visibility", ""), "line": p.get("line", ""),
+                   "module": p.get("module", "")}
+    else:
+        return None
+    if cfg.node_id_in_payload:
+        payload["node_id"] = n["id"]
+    return payload
+
+
+def _update_payloads_only(cfg: AppConfig, graph: GraphStore, nodes: list[dict]) -> dict:
+    """Re-push Qdrant payloads for the given nodes without re-embedding.
+
+    Retrieves the existing vectors and re-upserts them with the fresh payload,
+    so no embedding work is done (the ~20 min re-embed is skipped).
+    """
+    from qdrant_client import QdrantClient, models
+
+    client = QdrantClient(url=cfg.qdrant_url, api_key=cfg.qdrant_api_key or None, timeout=60)
+    try:
+        if not client.collection_exists(cfg.qdrant_collection):
+            return {"vectors_updated": 0, "vectors_deleted": 0,
+                    "payload_only": True, "note": "collection missing"}
+
+        total = 0
+        # Only kinds that carry a Qdrant point; modules have no vector/payload.
+        nodes = [n for n in nodes if n["kind"] in ("object", "element", "symbol")]
+        for i in range(0, len(nodes), 512):
+            chunk = nodes[i : i + 512]
+            ids_chunk = [n["id"] for n in chunk]
+            recs = client.retrieve(
+                collection_name=cfg.qdrant_collection,
+                ids=ids_chunk,
+                with_vectors=True,
+            )
+            by_id = {r.id: r for r in recs}
+            # Align to retrieved records: a point may be missing after a partial
+            # run; skip it rather than upserting a null vector.
+            ids = []
+            vectors = []
+            payloads = []
+            for n in chunk:
+                r = by_id.get(n["id"])
+                if r is None or r.vector is None:
+                    continue
+                pl = _payload_for(cfg, n)
+                if pl is None:
+                    continue
+                ids.append(n["id"])
+                vectors.append(r.vector)
+                payloads.append(pl)
+            if not ids:
+                continue
+            batch = models.Batch(ids=ids, vectors=vectors, payloads=payloads)
+            client.upsert(collection_name=cfg.qdrant_collection, points=batch, wait=True)
+            total += len(ids)
+        return {"vectors_updated": total, "vectors_deleted": 0, "payload_only": True}
+    finally:
+        client.close()
+
+
 def run_index(cfg: AppConfig, full: bool = False, no_vectors: bool = False,
-              object_filter: str | None = None) -> dict:
+              object_filter: str | None = None, kind_filter: str | None = None) -> dict:
     from qdrant_client import QdrantClient, models
 
     report_path = cfg.resolve_txt_root() / "ОтчетПоКонфигурации.txt"
     graph = GraphStore(cfg.graph_db_path)
 
-    # Checksum gate: skip if report unchanged and not --full and not targeted
-    if not full and object_filter is None and report_path.is_file():
+    # Checksum gate: skip if report unchanged and not --full and not targeted.
+    # payload_only and kind/object filters always run (they do targeted work).
+    if not full and not cfg.payload_only and object_filter is None and kind_filter is None \
+            and report_path.is_file():
         current_sum = _file_checksum(report_path)
         stored_sum = graph.get_meta("config_checksum")
         if stored_sum == current_sum:
@@ -374,22 +456,45 @@ def run_index(cfg: AppConfig, full: bool = False, no_vectors: bool = False,
         if not nodes:
             log.warning("--object %r matched no objects", object_filter)
 
-    prev_hashes = {} if full else graph.get_node_hashes()
+    if kind_filter:
+        embed_items = [it for it in embed_items if it.payload.get("kind") == kind_filter]
+        if not embed_items:
+            log.warning("--kind %r matched no embed items", kind_filter)
+
+    if cfg.payload_only:
+        stats = _update_payloads_only(cfg, graph, nodes)
+        graph.set_object_checksums(object_checksums)
+        graph.close()
+        return stats
+
+    # A kind filter embeds only that layer; the graph is already complete in
+    # SQLite (built by a prior full/--no-vectors run), so we skip graph writes
+    # and stale-node sweep to avoid touching other layers.
+    embed_only = kind_filter is not None and object_filter is None
+
+    if embed_only:
+        prev_hashes = {}
+    else:
+        prev_hashes = {} if full else graph.get_node_hashes()
+
     changed = [it for it in embed_items if prev_hashes.get(it.node_id) != hashes.get(it.node_id)]
     log.info(
         "graph: %d nodes, %d edges | vectors: %d total, %d to update (full=%s)",
         len(nodes), len(edges), len(embed_items), len(changed), full,
     )
 
-    graph.upsert_nodes(nodes)
-    graph.upsert_edges(edges)
-    if object_filter:
-        # Targeted reindex: only update/delete the object's own nodes, never
-        # sweep the whole graph (would drop every unrelated object).
-        dropped = []
+    if not embed_only:
+        graph.upsert_nodes(nodes)
+        graph.upsert_edges(edges)
+        if object_filter:
+            # Targeted reindex: only update/delete the object's own nodes, never
+            # sweep the whole graph (would drop every unrelated object).
+            dropped = []
+        else:
+            keep_ids = {n["id"] for n in nodes} | set(hashes.keys())
+            dropped = graph.delete_stale_nodes(keep_ids)
     else:
-        keep_ids = {n["id"] for n in nodes} | set(hashes.keys())
-        dropped = graph.delete_stale_nodes(keep_ids)
+        dropped = []
 
     stats = {"objects": n_objects, "bsl_files": n_bsl, "nodes": len(nodes),
              "edges": len(edges), "vectors_total": len(embed_items),
@@ -461,11 +566,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-vectors", action="store_true", help="skip embedding step")
     parser.add_argument("--object", default=None,
                         help="reindex a single object (Russian or English name, e.g. Справочник.Колледжи or Catalog.Колледжи)")
+    parser.add_argument("--payload-only", action="store_true",
+                        help="update Qdrant payloads only (no re-embedding); see ONEC_PAYLOAD_ONLY")
+    parser.add_argument("--kind", default=None,
+                        help="embed only one layer: object | element | symbol (graph stays in SQLite)")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     cfg = load_config(args.config)
-    stats = run_index(cfg, full=args.full, no_vectors=args.no_vectors, object_filter=args.object)
+    if args.payload_only:
+        cfg.payload_only = True
+    stats = run_index(cfg, full=args.full, no_vectors=args.no_vectors,
+                      object_filter=args.object, kind_filter=args.kind)
     print("Index complete:", stats)
     return 0
 

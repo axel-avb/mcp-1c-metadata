@@ -245,3 +245,15 @@ python -m src.indexer [--config X] [--full] [--no-vectors]
 - **Стабильность `stable_id`:** не менять логику формирования id, иначе весь индекс пересоберётся. `source_key` добавляется в `props`, не в id.
 - **`configVersion` из манифеста** — готовая пообъектная чек-сумма 1С; входит в `object_checksum` и покрывает метаданные без повторного хэширования XML.
 - **`.txt` vs манифест:** набор объектов и русские синонимы — из `.txt`; `en`-имена/`id`/`configVersion` и отсутствующие детали — из `.xml`.
+
+### Известное ограничение: типы объектов, отсутствующие в `.txt`
+
+`.txt`-отчёт (`report_parser._TYPE_MAP`) покрывает не все типы конфигурации. Следующие типы есть в XML-манифесте (`EN_TYPE_MAP`), но **нет** в `.txt`, поэтому для них **не создаются object-узлы** в графе: `BusinessProcess`, `CommonModule`, `CommonForm`, `CommonTemplate`, `HTTPService`, `WebService`, `WSReference`, `XDTOPackage`, `SettingsStorage`, `SessionParameter`, `EventSubscription`, `ExternalDataSource`, `Interface`, `Style`, `StyleItem`, `CommonPicture`, `FilterCriterion`, `AccountingRegister` (частично) и др.
+
+**Следствия:**
+- BSL-модули и символы этих объектов индексируются (как `module`/`symbol` с `object_name`), но:
+  - нет object-узла → `get_references`/`get_object_elements` по таким объектам возвращают «not found»;
+  - нет `HAS_MODULE`-связи → объект не связывается со своими модулями.
+- Пример: `get_symbol('ПриЗаписи')` работает (символы индексируются), а `get_references('БизнесПроцесс.ТестированиеФункционала')` — «Object not found», т.к. бизнес-процессов нет в `.txt`.
+
+**Варианты устранения (не реализовано):** при слиянии слоёв добавлять отсутствующие в `.txt` объекты из манифеста как object-узлы (с `props.incomplete=True`). Требует решения по приоритету: `.txt` — истина, но манифест дополняет *отсутствующие* типы.

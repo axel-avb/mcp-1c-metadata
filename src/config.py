@@ -61,6 +61,8 @@ class AppConfig:
     host: str = "0.0.0.0"
     port: int = 8765
     auth_token: str = ""  # if set, requires "Authorization: Bearer <token>" on HTTP
+    payload_only: bool = False  # update Qdrant payload without re-embedding
+    node_id_in_payload: bool = True  # store node_id in Qdrant payload for search_config
 
     def validate(self) -> None:
         if not self.qdrant_url:
@@ -97,6 +99,8 @@ _ENV_MAP: dict[str, tuple[str, ...]] = {
     "ONEC_HOST": ("host",),
     "ONEC_PORT": ("port",),
     "ONEC_AUTH_TOKEN": ("auth_token",),
+    "ONEC_PAYLOAD_ONLY": ("payload_only",),
+    "ONEC_NODE_ID_IN_PAYLOAD": ("node_id_in_payload",),
 }
 
 
@@ -107,6 +111,8 @@ def _coerce(value: str, target_type: type) -> Any:
         return float(value)
     if isinstance(target_type, type) and issubclass(target_type, Path):
         return Path(value).expanduser()
+    if target_type is bool:
+        return str(value).strip().lower() in ("1", "true", "yes", "on")
     return value
 
 
@@ -149,7 +155,8 @@ def _apply_json(cfg: AppConfig, data: dict[str, Any]) -> None:
 
     for key in ("config_root", "project_data_dir", "xml_root", "txt_root",
                 "qdrant_url", "qdrant_api_key",
-                "qdrant_collection", "graph_db_path", "host", "port", "auth_token"):
+                "qdrant_collection", "graph_db_path", "host", "port", "auth_token",
+                "payload_only", "node_id_in_payload"):
         put(cfg, key)
 
     if isinstance(data.get("qdrant"), dict):

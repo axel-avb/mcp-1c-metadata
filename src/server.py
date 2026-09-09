@@ -277,8 +277,12 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
                 if p.get("comment"):
                     line += f"\n    назначение: {p['comment']}"
                 if p.get("type") == "tabular_section" and p.get("object"):
-                    node = app.graph.element_by(p["object"], p["name"])
-                    cols = _children(app.graph, node["id"]) if node else []
+                    cols = None
+                    if p.get("node_id"):
+                        cols = _children(app.graph, p["node_id"])
+                    else:
+                        node = app.graph.element_by(p["object"], p["name"])
+                        cols = _children(app.graph, node["id"]) if node else []
                     if cols:
                         def _col(c):
                             dt = (c.get("props") or {}).get("data_type", "")
