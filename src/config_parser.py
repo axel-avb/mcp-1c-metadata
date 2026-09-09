@@ -332,8 +332,27 @@ def object_text_repr(obj: ConfigObject, element: ConfigElement | None = None) ->
     return "\n".join(lines)
 
 
-def element_text_repr(obj: ConfigObject, element: ConfigElement) -> str:
-    return object_text_repr(obj, element)
+def element_text_repr(
+    obj: ConfigObject, element: ConfigElement, parent_path: str = ""
+) -> str:
+    """Text for a single element, optionally prefixed with its parent chain
+    (e.g. 'Файлы › attribute: Хранилище') so nested columns carry context."""
+    lines = [f"{obj.type} {obj.name}"]
+    if obj.synonym and obj.synonym != obj.name:
+        lines.append(f"Синоним: {obj.synonym}")
+    if obj.comment:
+        lines.append(f"Предназначение: {obj.comment}")
+    header = f"{element.elem_type or 'Элемент'}: {element.display}"
+    if parent_path:
+        header = f"{parent_path} › {header}"
+    if element.data_type:
+        header += f" [{element.data_type}]"
+    if element.ref_object:
+        header += f" -> {element.ref_object}"
+    lines.append(header)
+    if element.comment:
+        lines.append(f"  Предназначение: {element.comment}")
+    return "\n".join(lines)
 
 
 def stable_id(*parts: str) -> str:

@@ -262,6 +262,8 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
                 extra = []
                 if p.get("object"):
                     extra.append(f"объект: {p['object']}")
+                if p.get("parent"):
+                    extra.append(f"в: {p['parent']}")
                 if p.get("type"):
                     extra.append(str(p["type"]))
                 if p.get("data_type"):

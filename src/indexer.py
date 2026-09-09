@@ -81,19 +81,21 @@ def collect_graph(cfg: AppConfig):
         obj: ConfigObject, elem: ConfigElement, parent_id: str, edge_kind: str, path: str
     ) -> None:
         eid = _element_id(obj, elem, path)
-        text = element_text_repr(obj, elem)
+        parent = path.lstrip("/").replace("/", " › ")
+        text = element_text_repr(obj, elem, parent_path=parent)
         nodes.append({
             "id": eid, "kind": "element", "name": elem.name, "object_name": obj.name,
             "type": elem.elem_type,
             "props": {"synonym": elem.synonym, "comment": elem.comment,
-                      "data_type": elem.data_type, "ref_object": elem.ref_object},
+                      "data_type": elem.data_type, "ref_object": elem.ref_object,
+                      "parent": parent},
         })
         hashes[eid] = _hash("element", text)
         embed_items.append(EmbeddingItem(
             eid, text,
             payload={"kind": "element", "name": elem.name, "object": obj.name,
                      "type": elem.elem_type, "data_type": elem.data_type,
-                     "comment": elem.comment},
+                     "comment": elem.comment, "parent": parent},
         ))
         edges.append((parent_id, eid, edge_kind))
         if elem.ref_object and elem.ref_object in obj_by_name:
