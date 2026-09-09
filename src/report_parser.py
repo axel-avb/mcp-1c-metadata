@@ -5,8 +5,11 @@ Produces the same ConfigObject/ConfigElement model as the deprecated XML parser.
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 from .config_parser import ConfigElement, ConfigObject
 
@@ -121,10 +124,21 @@ class _Node:
 
 
 def parse_report(path: str | Path) -> list[ConfigObject]:
-    """Parse ОтчетПоКонфигурации.txt and return list of ConfigObject."""
+    """Parse ОтчетПоКонфигурации.txt and return list of ConfigObject.
+
+    Tolerant: a missing/unreadable/badly-encoded file yields an empty list.
+    """
     path = Path(path)
-    raw = path.read_bytes()
-    text = raw.decode("utf-16-le")
+    try:
+        raw = path.read_bytes()
+    except OSError as e:
+        log.warning("cannot read report %s: %s", path, e)
+        return []
+    try:
+        text = raw.decode("utf-16-le")
+    except UnicodeDecodeError as e:
+        log.warning("report %s has wrong encoding: %s", path, e)
+        return []
     lines = text.split("\n")
 
     objects: list[ConfigObject] = []

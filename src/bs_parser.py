@@ -195,15 +195,45 @@ def parse_bs_file(
     return module
 
 
+_TYPE_FOLDER_TO_RU: dict[str, str] = {
+    "Catalogs": "Справочник",
+    "Documents": "Документ",
+    "AccumulationRegisters": "РегистрНакопления",
+    "InformationRegisters": "РегистрСведений",
+    "AccountingRegisters": "РегистрБухгалтерии",
+    "ChartsOfCharacteristicTypes": "ПланВидовХарактеристики",
+    "ChartsOfAccounts": "ПланСчетов",
+    "ExchangePlans": "ПланОбмена",
+    "Constants": "Константа",
+    "Enums": "Перечисление",
+    "Reports": "Отчет",
+    "DataProcessors": "Обработка",
+    "CommonModules": "ОбщийМодуль",
+    "CommonForms": "ОбщаяФорма",
+    "CommonTemplates": "ОбщийМакет",
+    "Roles": "Роль",
+    "Subsystems": "Подсистема",
+    "Tasks": "Задача",
+    "BusinessProcesses": "БизнесПроцесс",
+    "DocumentJournals": "ЖурналДокументов",
+    "ScheduledJobs": "РегламентноеЗадание",
+}
+
+
 def infer_module_role(folder: Path, file_name: str) -> tuple[str, str]:
-    """Infer (module_role, object_name) from the folder/file layout.
+    """Infer (module_role, object_name) from the dump folder layout (format 2.13).
 
     Layout examples:
-      Catalogs/Catalog.Nomenclature/ObjectModule.bsl   -> ("object", "Каталог.Номенклатура")
-      Catalogs/Catalog.X/ManagerModule.bsl             -> ("manager", "Каталог.X")
-      Catalogs/Catalog.Y/Forms/FormZ/FormModule.bsl    -> ("form:FormZ", "Каталог.Y")
+      Catalogs/ВУЗы/Ext/ObjectModule.bsl                    -> ("object", "Справочник.ВУЗы")
+      Catalogs/ВУЗы/Ext/ManagerModule.bsl                   -> ("manager", "Справочник.ВУЗы")
+      Catalogs/Абитуриенты/Forms/ФормаСпискаУпр/Ext/Form/Module.bsl
+                                                             -> ("form:ФормаСпискаУпр", "Справочник.Абитуриенты")
+      CommonModules/ПроверкаЕГЭ/Ext/Module.bsl              -> ("common_module", "")
     """
     name = file_name[:-4] if file_name.lower().endswith((".bsl", ".bs")) else file_name
+
+    # role from the file name; the form's generic "Module.bsl" is disambiguated
+    # via the "Form" path segment.
     role = "module"
     if name.endswith("Module"):
         base = name[: -len("Module")]
@@ -211,17 +241,35 @@ def infer_module_role(folder: Path, file_name: str) -> tuple[str, str]:
             role = "manager"
         elif base == "Object":
             role = "object"
+        elif base == "RecordSet":
+            role = "recordset"
         elif base.startswith("Form"):
             role = f"form:{base[4:] or 'default'}"
         else:
             role = base.lower() or "module"
 
-    # object name from folder path: <root>/<TypeFolder>/<Type>.<Name>/Module.bsl
-    # the object folder is the immediate parent of the module file, e.g. "Catalog.Nomenclature"
-    object_name = folder.name if "." in folder.name else ""
-    if not object_name:
-        for part in reversed(folder.parts):
-            if "." in part:
-                object_name = part
-                break
+    # Form module: <...>/Forms/<FormName>/Ext/Form/Module.bsl
+    parts = list(folder.parts)
+    if "Form" in parts and "Forms" in parts:
+        form_idx = parts.index("Forms")
+        if form_idx + 1 < len(parts):
+            role = f"form:{parts[form_idx + 1]}"
+
+    # Object name: find the object folder (<TypeFolder>/<ShortName>) by walking
+    # back from the module through known top-level type folders.
+    object_name = ""
+    short = ""
+    type_prefix = ""
+    for i, p in enumerate(parts):
+        if p in _TYPE_FOLDER_TO_RU:
+            if i + 1 < len(parts):
+                short = parts[i + 1]
+                type_prefix = _TYPE_FOLDER_TO_RU[p]
+            break
+    if short and type_prefix:
+        object_name = f"{type_prefix}.{short}"
+    elif "CommonModules" in parts or "CommonForms" in parts:
+        # common modules/forms have no owning configuration object
+        object_name = ""
+
     return role, object_name
