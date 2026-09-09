@@ -4,3 +4,5 @@ __pycache__/
 data/
 .env
 config.json
+
+.pytest_cache/

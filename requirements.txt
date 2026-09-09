@@ -4,3 +4,6 @@ fastmcp==4.0.3
 qdrant-client==1.19.0
 httpx==0.28.1
 uvicorn==0.52.4
+
+# Test dependencies
+pytest==9.1.1
