@@ -176,6 +176,19 @@ class GraphStore:
             row = cur.fetchone()
             return self._rows_to_dicts([row])[0] if row else None
 
+    def element_by(self, object_name: str, name: str) -> dict[str, Any] | None:
+        """Find a direct element (e.g. a tabular section) of an object by name."""
+        with self._lock:
+            cur = self.conn.execute(
+                "SELECT n.* FROM nodes n "
+                "JOIN edges e ON e.src = o.id AND e.dst = n.id AND e.kind='HAS_ELEMENT' "
+                "JOIN nodes o ON o.id = e.src AND o.kind='object' "
+                "WHERE o.name=? AND n.name=? AND n.kind='element' LIMIT 1",
+                (object_name, name),
+            )
+            row = cur.fetchone()
+            return self._rows_to_dicts([row])[0] if row else None
+
     def elements_of(self, object_id: str) -> list[dict[str, Any]]:
         with self._lock:
             cur = self.conn.execute(
