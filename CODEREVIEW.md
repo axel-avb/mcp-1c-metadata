@@ -77,7 +77,7 @@ issubclass(target_type, Path)): return Path(value).expanduser()`.
 
 ## HIGH
 
-### H1. `references_to` инвертирована → «кто ссылается на объект» всегда пусто
+### H1. `references_to` инвертирована → «кто ссылается на объект» всегда пусто — **FIXED ✅**
 
 `src/graph.py:178-185`: `JOIN edges e ON e.dst = n.id WHERE e.src = ? AND
 kind='REFERENCE'`. Для REFERENCE-ребра `элемент → объект` объект — это
@@ -87,7 +87,7 @@ kind='REFERENCE'`. Для REFERENCE-ребра `элемент → объект`
 
 **Фикс:** `JOIN edges e ON e.src = n.id WHERE e.dst = ?`.
 
-### H2. Устаревшие узлы удаляются из SQLite, но никогда из Qdrant
+### H2. Устаревшие узлы удаляются из SQLite, но никогда из Qdrant — **FIXED ✅**
 
 `src/indexer.py:196` вызывает `graph.delete_stale_nodes(keep_ids)`, но
 `client.delete(...)` нигде нет (в indexer'е только `collection_exists`,
@@ -98,7 +98,7 @@ kind='REFERENCE'`. Для REFERENCE-ребра `элемент → объект`
 **Фикс:** после вычисления drop-ид — `client.delete(collection,
 points_selector=...)` по явным point id.
 
-### H3. `get_symbol` обещает тело процедуры, но не возвращает его
+### H3. `get_symbol` обещает тело процедуры, но не возвращает его — **FIXED ✅**
 
 Docstring: «signature, visibility, module, **body**» (`src/server.py:231`);
 `_fmt_node` имеет ветку `with_body`, читающую `p.get("body")`
@@ -109,7 +109,7 @@ Docstring: «signature, visibility, module, **body**» (`src/server.py:231`);
 **Фикс:** сохранять `body` в props символа (или отдельный столбец) и
 выводить в `get_symbol`.
 
-### H4. `delete_stale_nodes` строит неограниченный `IN (...)` → падение на больших конфигурациях
+### H4. `delete_stale_nodes` строит неограниченный `IN (...)` → падение на больших конфигурациях — **FIXED ✅**
 
 `src/graph.py:108-124`: `",".join("?"*len(keep_ids))` и `drop+drop` (удвоенно)
 без чанкинга, в отличие от `_neighbors`, который чанкует по
@@ -119,7 +119,7 @@ Docstring: «signature, visibility, module, **body**» (`src/server.py:231`);
 
 **Фикс:** переиспользовать чанкинг из `_neighbors`.
 
-### H5. `search_config`: утечка `QdrantClient` на ошибках + нет валидации входа
+### H5. `search_config`: утечка `QdrantClient` на ошибках + нет валидации входа — **FIXED ✅**
 
 `src/server.py:180-226`: `client.close()` только на happy path, нет
 `try/finally` — при исключении из `query_points` (Qdrant down, некорректный
