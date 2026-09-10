@@ -221,6 +221,25 @@ Remaining roadmap (full map in `PLAN.md` §13):
 - **Tier C** (deferred, no data model): `get_extension_object_diff`,
   `get_form_structure`/`find_form_links`, `find_dependency_paths`.
 
+### Token cost at model initialization
+
+The full `tools/list` for all 23 tools is **~17,770 chars** (~4.5–5K tokens for
+Latin text). This is loaded into the client context on every start/re-init.
+
+Heaviest tools (long enumerations in docstrings):
+
+| Tool | Chars |
+|---|---|
+| `get_metadata` | 1059 |
+| `get_metadata_object_structure` | 1031 |
+| `find_metadata_elements` | 979 |
+| `search_bsl_routines` | 935 |
+| `get_metadata_element_type` | 913 |
+
+If cost matters, trim the verbose enumerations (`sections`, `element_type`,
+`search_by`) from docstrings (they duplicate the JSON schema) for ~1–1.5K tokens
+of savings with no functional loss.
+
 ### Connecting an MCP client
 
 Endpoint: `http://<host>:<port>/mcp` (streamable HTTP transport).
