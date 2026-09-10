@@ -139,14 +139,10 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
 
     @mcp.tool
     def list_objects(type: str = "") -> str:
-        """List configuration objects (catalogs, documents, registers, ...).
+        """List configuration objects grouped by type with element counts.
 
         Args:
-            type: optional filter — one of: catalog, document, accumulation_register,
-                  information_register, journal_register, calculation_register, constant,
-                  enumeration, chart_of_characteristics, exchange_plan, chart_of_accounts.
-        Returns:
-            Objects grouped by type with element counts.
+            type: optional object type filter (empty = all).
         """
         objects = app.graph.objects(type or None)
         if not objects:
@@ -170,11 +166,11 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
 
     @mcp.tool
     def get_object_elements(object_name: str, include_children: bool = True) -> str:
-        """Show all elements (attributes, tabular sections, commands, ...) of one object.
+        """Show all elements of one object.
 
         Args:
-            object_name: full name like "Каталог.Номенклатура" or short "Номенклатура".
-            include_children: also list nested elements (e.g. columns of a tabular section).
+            object_name: full or short object name.
+            include_children: also list nested elements (e.g. table columns).
         """
         obj = app.graph.object_by_name(object_name)
         if obj is None:
@@ -284,7 +280,7 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
 
     @mcp.tool
     def search_config(query: str, top_k: int = 5, kind: str = "") -> str:
-        """Semantic search across the configuration: objects, elements and BSL procedures.
+        """Semantic search across objects, elements and BSL procedures.
 
         Args:
             query: natural-language query in Russian or English.
@@ -470,15 +466,15 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
     def get_metadata(mode: str = "summary", category: str = "",
                      object_name: str = "", object_match: str = "contains",
                      limit: int = 0, offset: int = 0) -> str:
-        """Inventory of the configuration: counts, categories, objects.
+        """Inventory of the configuration.
 
         Args:
-            mode: summary | categories | objects.
-            category: optional object type filter (catalog, document, ...).
+            mode: summary (counts) | categories (by type) | objects (list).
+            category: optional object type filter.
             object_name: name pattern for mode=objects.
-            object_match: exact | starts_with | contains.
-            limit: page size for mode=objects (0 = all).
-            offset: page offset for mode=objects.
+            object_match: matching mode.
+            limit: page size (0 = all).
+            offset: page offset.
         """
         if mode == "categories":
             counts = app.graph.object_counts()
@@ -534,13 +530,9 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
         """Structure of one object grouped by section.
 
         Args:
-            object_ref: full/short/source_key object name.
-            sections: comma-separated section names; empty = all supported.
-                      attributes, tabular_parts, tabular_attributes (needs
-                      tabular_part), characteristics, resources, dimensions,
-                      forms, commands, layouts, enum_values, predefined,
-                      url_templates, url_methods.
-            tabular_part: tabular-section name for the tabular_attributes section.
+            object_ref: object name (full/short/source_key).
+            sections: comma-separated section names (empty = all).
+            tabular_part: parent tabular-section name for tabular_attributes.
         """
         obj = _resolve_object(object_ref)
         if obj is None:
@@ -586,14 +578,12 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
     @mcp.tool
     def get_metadata_element_type(object_ref: str, element_type: str,
                                   container_ref: str = "") -> str:
-        """Typed children of an object (attributes/resources/dimensions/...).
+        """Typed children of an object.
 
         Args:
             object_ref: object name.
-            element_type: comma-separated types (attribute, resource, dimension,
-                          form, command, layout, value, ...).
-            container_ref: parent element name for nested children (e.g. a
-                           tabular part); empty = direct object children.
+            element_type: comma-separated element types to include.
+            container_ref: parent element for nested children (e.g. tabular part).
         """
         obj = _resolve_object(object_ref)
         if obj is None:
@@ -624,10 +614,10 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
         """Resolve a reference to a node card.
 
         Args:
-            ref_type: object | element | form | attribute | symbol | routine.
+            ref_type: node kind (object/element/symbol).
             ref: the name to resolve.
             owner_ref: owning object name (disambiguation).
-            mode: resolve | properties.
+            mode: resolve (card) | properties (with raw props).
         """
         node = None
         if ref_type == "object":
@@ -657,8 +647,8 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
 
         Args:
             object_ref: object name.
-            detail: brief | standard | extended.
-            sections: comma-separated: overview, structure, forms, bsl, usages.
+            detail: list cap (brief/standard/extended).
+            sections: comma-separated sections (empty = all).
         """
         obj = _resolve_object(object_ref)
         if obj is None:
@@ -701,8 +691,7 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
         """Find objects by description or by a child element name.
 
         Args:
-            search_by: description | attribute | tabular_part | resource |
-                       dimension | form | command | layout.
+            search_by: description or a child element type.
             search_text: text to match.
             within_object: restrict to one object.
             limit: max results.
@@ -742,11 +731,10 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
         """Find child elements across the project.
 
         Args:
-            element_type: attribute | tabular_section | resource | dimension |
-                          form | command | layout | value.
+            element_type: element type to match.
             element_name: name pattern.
             owner_object: restrict to one owning object.
-            mode: exact | starts_with | contains.
+            mode: matching mode.
             limit: max results.
         """
         elems = app.graph.elements_matching(
@@ -788,8 +776,7 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
         """Modules of an owner and their routines.
 
         Args:
-            mode: modules_of_owner | modules_by_owner_name | module_routines |
-                  common_module_routines.
+            mode: modules_of_owner / module_routines / common_module_routines.
             owner_ref: object/owner name.
             module_ref: module name or id.
             routine_name: routine name filter.
@@ -828,7 +815,7 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
 
         Args:
             name: name pattern (mode=name) or signature substring (mode=signature).
-            mode: name | exported | signature. (unused/description not indexed.)
+            mode: name | exported | signature.
             object_name: owner object filter.
             exported_only: keep only Экспорт routines.
             limit: max results.
