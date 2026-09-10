@@ -316,10 +316,9 @@ def _collect_legacy_form_modules(cfg: AppConfig, objects: list[ConfigObject]):
     xml_root = cfg.resolve_xml_root()
     obj_by_name = {obj.name: stable_id("object", obj.node_id) for obj in objects}
 
-    try:
-        from parsers.form_bin_parser_v2 import V8FormBinParser  # type: ignore
-    except ImportError as e:
-        log.warning("legacy parser unavailable: %s", e)
+    from .xml_object import _import_v8_parser
+    V8FormBinParser = _import_v8_parser()
+    if V8FormBinParser is None:
         return
 
     parser = V8FormBinParser()

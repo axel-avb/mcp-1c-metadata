@@ -11,6 +11,7 @@ Tolerant: any broken/missing file yields an empty result, not an exception.
 from __future__ import annotations
 
 import logging
+import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -85,6 +86,25 @@ def _find_legacy_forms(dump_dir: Path) -> list[Path]:
         return []
 
 
+def _legacy_parser_root() -> Path:
+    """Path of the vendored v8_ordinary_unpack submodule (containing parsers/)."""
+    # src/xml_object.py -> <repo>/src -> <repo>/v8_ordinary_unpack
+    return Path(__file__).resolve().parent.parent / "v8_ordinary_unpack"
+
+
+def _import_v8_parser():
+    """Import V8FormBinParser from the git submodule, or None if unavailable."""
+    root = _legacy_parser_root()
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    try:
+        from parsers.form_bin_parser_v2 import V8FormBinParser  # type: ignore
+    except ImportError as e:
+        log.warning("legacy parser unavailable: %s", e)
+        return None
+    return V8FormBinParser
+
+
 def parse_legacy_object(source_key: str, dump_dir: Path) -> dict | None:
     """Parse the legacy (ordinary) forms of one object via the vendored binary parser.
 
@@ -100,10 +120,8 @@ def parse_legacy_object(source_key: str, dump_dir: Path) -> dict | None:
     if not forms:
         return None
 
-    try:
-        from parsers.form_bin_parser_v2 import V8FormBinParser  # type: ignore
-    except ImportError as e:
-        log.warning("legacy parser unavailable: %s", e)
+    V8FormBinParser = _import_v8_parser()
+    if V8FormBinParser is None:
         return None
 
     parser = V8FormBinParser()
