@@ -261,3 +261,57 @@ python -m src.indexer [--config X] [--full] [--no-vectors]
 - Пример: `get_symbol('ПриЗаписи')` работает (символы индексируются), а `get_references('БизнесПроцесс.ТестированиеФункционала')` — «Object not found», т.к. бизнес-процессов нет в `.txt`.
 
 **Варианты устранения (не реализовано):** при слиянии слоёв добавлять отсутствующие в `.txt` объекты из манифеста как object-узлы (с `props.incomplete=True`). Требует решения по приоритету: `.txt` — истина, но манифест дополняет *отсутствующие* типы.
+
+---
+
+## 13. Расширение инструментария MCP (дорожная карта)
+
+Классификация целевого набора инструментов по стоимости реализации на текущей
+модели данных (SQLite: object/element/symbol/module + рёбра
+HAS_ELEMENT/CHILD_ELEMENT/REFERENCE/DEFINES/CALLS/USES/HAS_MODULE; Qdrant — семантика).
+
+### Слой A — реализуемо сейчас (данные уже в графе)
+
+| Инструмент | База | Замечания |
+|---|---|---|
+| `get_metadata` | `list_objects` + `graph_stats` | добавить `mode=categories/objects`, `object_match`, `only_adopted` |
+| `get_metadata_object_structure` | `get_object_elements` | добавить фильтр `sections` (attributes/tabular_parts/forms/commands/layouts/resources/dimensions) |
+| `inspect_metadata_object` | обёртка | overview/structure/forms/bsl/usages; access/predefined/subscriptions — нет |
+| `get_metadata_details` (resolve) | `object_by_name`/`symbols_by_name`/`element_by` | properties — частично |
+| `get_metadata_element_type` | `data_type`/`ref_object` на элементах | типы реквизитов уже есть |
+| `find_metadata_objects` | SQL `comment`/`synonym`/`name` | `search_by: description/attribute/form/tabular_part/resource/dimension` |
+| `find_metadata_elements` | SQL `element.type` + `object_name` | всё есть |
+| `find_metadata_usages` (objects) | `get_references` | USES/REFERENCE; `register_movements` — нет |
+| `get_bsl_modules` | SQL `module`/`DEFINES` | modules_of_owner / module_routines |
+| `search_bsl_routines` | `symbols` | name/signature/exported/is_legacy; `description`/`unused` — нет |
+| `get_bsl_routine_body` | `get_symbol` | + `body_offset/limit` (пагинация тела) |
+| `get_bsl_call_graph` | `get_callers`/`get_callees` | + `mode=subtree` (BFS по CALLS, `depth`) |
+| `search_bsl_code` | `search_config(kind="symbol")` | + фильтры export/owner_categories |
+
+### Слой B — с усилиями (нужна интеграция парсеров из сабмодуля в граф)
+
+| Инструмент | Источник (в `v8_ordinary_unpack/parsers/`) |
+|---|---|
+| `find_predefined_values` | `predefined_parser.py` |
+| `get_event_subscriptions` | `event_subscription_parser.py` |
+| `get_access_rights` | `role_rights_parser.py` (роли есть, права — нет) |
+
+Каждый требует: распарсить → разложить в узлы/рёбра → обёртка. Оценка ~неделя/инструмент.
+
+### Слой C — титанические усилия (нет модели данных / отложено)
+
+| Инструмент | Почему отложен |
+|---|---|
+| `get_extension_object_diff` | нет понятия расширений/базовой конфигурации |
+| `get_form_structure` / `find_form_links` | контролы форм — только text (`structure_text`), в граф не разложены |
+| `find_dependency_paths` | нет рёбер BINDS_TO/LINKS_TO_COMMAND/HAS_HANDLER |
+| `get_tool_return_schema` | нестандартно для FastMCP, низкая ценность |
+| `only_adopted`, `is_ssl_api`, `DO_MOVEMENTS_IN`, `unused` | нет соответствующих данных в выгрузке |
+
+### Рекомендация (порядок)
+
+1. Слой A → `inspect_metadata_object` (досье одним вызовом), затем
+   `find_metadata_objects`/`find_metadata_elements` («где поле X»), потом
+   `get_bsl_call_graph(subtree)` + `get_bsl_routine_body(пагинация)`.
+2. Слой B — по подтверждению владельца (predefined/подписки/права).
+3. Слой C — последняя очередь.

@@ -192,6 +192,17 @@ and the reranker client in memory. Vector queries to Qdrant run on the fly.
 | `reindex_status` | Status of the background reindex (idle/running/done/failed) |
 | `graph_stats` | Graph statistics: nodes/edges by kind |
 
+Tooling roadmap (full map in `PLAN.md` §13):
+
+- **Tier A** (doable on the current model): `get_metadata`, `inspect_metadata_object`,
+  `find_metadata_objects`, `find_metadata_elements`, `get_metadata_object_structure`,
+  `get_bsl_modules`, `search_bsl_routines`, `get_bsl_routine_body` (pagination),
+  `get_bsl_call_graph` (subtree), `search_bsl_code`.
+- **Tier B** (needs submodule parsers wired into the graph): `find_predefined_values`,
+  `get_event_subscriptions`, `get_access_rights`.
+- **Tier C** (deferred, no data model): `get_extension_object_diff`,
+  `get_form_structure`/`find_form_links`, `find_dependency_paths`.
+
 ### Connecting an MCP client
 
 Endpoint: `http://<host>:<port>/mcp` (streamable HTTP transport).

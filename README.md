@@ -207,6 +207,17 @@ python -m src.server
 | `reindex_status` | Статус фоновой переиндексации (idle/running/done/failed) |
 | `graph_stats` | Статистика графа: узлы/рёбра по видам |
 
+План расширения инструментария (полная дорожная карта — `PLAN.md` §13):
+
+- **Слой A** (реализуемо на текущей модели): `get_metadata`, `inspect_metadata_object`,
+  `find_metadata_objects`, `find_metadata_elements`, `get_metadata_object_structure`,
+  `get_bsl_modules`, `search_bsl_routines`, `get_bsl_routine_body` (пагинация),
+  `get_bsl_call_graph` (subtree), `search_bsl_code`.
+- **Слой B** (нужна интеграция парсеров из сабмодуля): `find_predefined_values`,
+  `get_event_subscriptions`, `get_access_rights`.
+- **Слой C** (отложено, нет модели): `get_extension_object_diff`,
+  `get_form_structure`/`find_form_links`, `find_dependency_paths`.
+
 Примеры вызовов (что видит LLM-агент):
 
 ```text

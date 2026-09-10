@@ -47,9 +47,19 @@
 - Токен из `.git_creditionals.md` — только в `.gitignore` и remote URL; в коммиты не попадает.
 
 ## Пауза / TODO (временно отложено)
-1. ~~Внешний бинарный парсер легаси-форм (phase-2)~~ — **сделано**: вендорен `parsers/`
-   (v8_ordinary_unpack), `parse_legacy_object` + `_collect_legacy_form_modules`
+1. ~~Внешний бинарный парсер легаси-форм (phase-2)~~ — **сделано**: git-субмодуль
+   `v8_ordinary_unpack`, `parse_legacy_object` + `_collect_legacy_form_modules`
    извлекают BSL-код из `Form.bin`; 1067 legacy-символов / 56 legacy-модулей.
-   Схема формы (элементы управления) — в text-описании парсера, в граф не раскладывается.
+   Схема формы — в text-описании парсера, в граф не раскладывается.
 2. Дополнить `.txt` отсутствующими типами объектов (business_process/common_module) из манифеста.
 3. Полный переэмбеддинг legacy-символов в Qdrant после смены парсера.
+
+## Расширение инструментария (дорожная карта — PLAN.md §13)
+- **Слой A** (в туду, реализуемо сейчас): `get_metadata`, `inspect_metadata_object`,
+  `find_metadata_objects/elements`, `get_metadata_object_structure`, `get_bsl_modules`,
+  `search_bsl_routines`, `get_bsl_routine_body`, `get_bsl_call_graph`, `search_bsl_code`.
+- **Слой B** (в плане, с усилиями): интеграция `predefined_parser`,
+  `event_subscription_parser`, `role_rights_parser` → `find_predefined_values`,
+  `get_event_subscriptions`, `get_access_rights`.
+- **Слой C** (отложено, титанически): extension diff, form structure/links,
+  dependency paths.
