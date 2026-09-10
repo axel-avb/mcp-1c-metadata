@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Any
+from typing import Any, Literal
 
 from fastmcp import FastMCP
 
@@ -128,10 +128,30 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
         name="1c-configuration",
         auth=auth,
         instructions=(
-            "MCP server for browsing a 1C:Enterprise configuration exported to XML/BSL sources. "
-            "Use list_objects to see the object tree, get_object_elements to drill into an object, "
-            "search_config for semantic search across metadata and code, and the call-graph tools "
-            "(get_callers/get_callees) to navigate BSL procedures."
+            "Browse a 1C:Enterprise configuration exported to XML/BSL sources. "
+            "Object names are either Russian full form (Справочник.Колледжи), short form "
+            "(Колледжи) or English source_key (Catalog.Колледжи) — all accepted.\n\n"
+            "Routing guide:\n"
+            "- overview of everything -> get_metadata (summary/categories/objects)\n"
+            "- one object's full dossier -> inspect_metadata_object\n"
+            "- structure of one object by section -> get_metadata_object_structure\n"
+            "- typed children of an object -> get_metadata_element_type\n"
+            "- resolve a name/id to a node card -> get_metadata_details\n"
+            "- 'where is field X' / find object by an attribute name -> find_metadata_objects\n"
+            "- find child elements across the project -> find_metadata_elements\n"
+            "- who references/uses an object -> find_metadata_usages\n"
+            "- natural-language search over metadata -> search_config\n"
+            "- natural-language search over code bodies -> search_bsl_code\n"
+            "- list modules of an object and their routines -> get_bsl_modules\n"
+            "- find a procedure/function by name/signature/export -> search_bsl_routines\n"
+            "- read a routine's body -> get_bsl_routine_body\n"
+            "- call graph (callees/callers/subtree) -> get_bsl_call_graph\n"
+            "- single procedure details -> get_symbol\n"
+            "- inbound/outbound callers -> get_callers / get_callees\n"
+            "- data-type references of an object -> get_references\n"
+            "- object tree + element counts -> list_objects\n"
+            "- elements of one object -> get_object_elements\n"
+            "- index health -> graph_stats; rebuild -> reindex / reindex_status"
         ),
     )
 
@@ -279,7 +299,8 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
             client.close()
 
     @mcp.tool
-    def search_config(query: str, top_k: int = 5, kind: str = "") -> str:
+    def search_config(query: str, top_k: int = 5,
+                      kind: Literal["object", "element", "symbol"] | None = None) -> str:
         """Semantic search across objects, elements and BSL procedures.
 
         Args:
@@ -287,7 +308,7 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
             top_k: number of results to return (min 1).
             kind: optional filter — "object" | "element" | "symbol".
         """
-        return _search_config(query, top_k=top_k, kind=kind)
+        return _search_config(query, top_k=top_k, kind=kind or "")
 
     @mcp.tool
     def search_bsl_code(query: str, top_k: int = 5) -> str:
@@ -370,7 +391,8 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
         return "\n".join(lines)
 
     @mcp.tool
-    def get_references(object_name: str, direction: str = "both") -> str:
+    def get_references(object_name: str,
+                       direction: Literal["in", "out", "both"] = "both") -> str:
         """Show configuration references for an object.
 
         Args:
@@ -463,8 +485,10 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
         return cands[0] if cands else None
 
     @mcp.tool
-    def get_metadata(mode: str = "summary", category: str = "",
-                     object_name: str = "", object_match: str = "contains",
+    def get_metadata(mode: Literal["summary", "categories", "objects"] = "summary",
+                     category: str = "",
+                     object_name: str = "",
+                     object_match: Literal["exact", "starts_with", "contains"] = "contains",
                      limit: int = 0, offset: int = 0) -> str:
         """Inventory of the configuration.
 
@@ -609,8 +633,9 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
         return "\n".join(out)
 
     @mcp.tool
-    def get_metadata_details(ref_type: str, ref: str, owner_ref: str = "",
-                             mode: str = "resolve") -> str:
+    def get_metadata_details(ref_type: Literal["object", "element", "form", "attribute", "symbol", "routine"],
+                             ref: str, owner_ref: str = "",
+                             mode: Literal["resolve", "properties"] = "resolve") -> str:
         """Resolve a reference to a node card.
 
         Args:
@@ -641,7 +666,8 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
         return _fmt_node(node)
 
     @mcp.tool
-    def inspect_metadata_object(object_ref: str, detail: str = "standard",
+    def inspect_metadata_object(object_ref: str,
+                                detail: Literal["brief", "standard", "extended"] = "standard",
                                 sections: str = "") -> str:
         """Object dossier: counts + bounded lists by section.
 
@@ -686,7 +712,8 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
         return "\n".join(out)
 
     @mcp.tool
-    def find_metadata_objects(search_by: str, search_text: str = "",
+    def find_metadata_objects(search_by: Literal["description", "attribute", "tabular_part", "resource", "dimension", "form", "command", "layout"],
+                              search_text: str = "",
                               within_object: str = "", limit: int = 20) -> str:
         """Find objects by description or by a child element name.
 
@@ -726,7 +753,8 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
 
     @mcp.tool
     def find_metadata_elements(element_type: str, element_name: str = "",
-                               owner_object: str = "", mode: str = "contains",
+                               owner_object: str = "",
+                               mode: Literal["exact", "starts_with", "contains"] = "contains",
                                limit: int = 50) -> str:
         """Find child elements across the project.
 
@@ -771,7 +799,8 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
     # ------------------------------------------------------- Tier A: BSL ---
 
     @mcp.tool
-    def get_bsl_modules(mode: str, owner_ref: str = "", module_ref: str = "",
+    def get_bsl_modules(mode: Literal["modules_of_owner", "modules_by_owner_name", "module_routines", "common_module_routines"],
+                        owner_ref: str = "", module_ref: str = "",
                         routine_name: str = "") -> str:
         """Modules of an owner and their routines.
 
@@ -808,7 +837,8 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
         return f"Unknown mode: {mode}"
 
     @mcp.tool
-    def search_bsl_routines(name: str = "", mode: str = "name",
+    def search_bsl_routines(name: str = "",
+                            mode: Literal["name", "exported", "signature"] = "name",
                             object_name: str = "", exported_only: bool = False,
                             limit: int = 50) -> str:
         """Search BSL routines.
@@ -873,7 +903,8 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
         return "\n\n".join(out)
 
     @mcp.tool
-    def get_bsl_call_graph(routine_ref: str, mode: str = "callees",
+    def get_bsl_call_graph(routine_ref: str,
+                           mode: Literal["callees", "callers", "subtree"] = "callees",
                            depth: int = 2, owner_ref: str = "") -> str:
         """Call graph from a routine.
 
