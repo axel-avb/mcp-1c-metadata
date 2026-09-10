@@ -47,6 +47,10 @@ SQLite-граф (объекты, элементы, рёбра). Семантич
 ## Установка
 
 ```bash
+git clone --recurse-submodules https://github.com/axel-avb/mcp-1c-metadata.git
+# или, после обычного clone:
+git submodule update --init --recursive
+
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt

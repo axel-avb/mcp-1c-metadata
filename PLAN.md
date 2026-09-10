@@ -120,9 +120,12 @@ def parse_legacy_object(source_key: str, dump_dir: Path) -> dict | None:
     ...
 ```
 
-### 4.4 BSL — поправить источник
-- Сейчас `config_root` указывает на `metadata` → `found 0 BSL files`.
-- BSL искать в `project_data_dir/code/**` (`.bsl`/`.bs`), включая `Ext/`-подкаталоги и `Form/Module.bsl`.
+### 4.4 BSL — поправить источник ✅
+
+- Было: `config_root` указывал на `metadata` → `found 0 BSL files`.
+- Стало: BSL ищется в `xml_root` (`resolve_xml_root()`, default `project_data_dir/code/**`),
+  включая `Ext/`-подкаталоги и `Form/Module.bsl`; fallback на `config_root` для
+  `.txt`-режима совместимости (`src/indexer.py:182-184`).
 
 ---
 
