@@ -159,10 +159,15 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
 
     @mcp.tool
     def list_objects(type: str = "") -> str:
-        """List configuration objects grouped by type with element counts.
+        """List configuration objects grouped by type, with element counts.
+
+        USE: when you need the full object tree or a whole category. For one
+        specific object use inspect_metadata_object instead (this returns every
+        object and can be huge — pass `type` to narrow, e.g. type="catalog").
 
         Args:
-            type: optional object type filter (empty = all).
+            type: object type to filter by, e.g. "catalog", "document".
+                  Empty = all types (large output, avoid unless necessary).
         """
         objects = app.graph.objects(type or None)
         if not objects:
@@ -186,11 +191,16 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
 
     @mcp.tool
     def get_object_elements(object_name: str, include_children: bool = True) -> str:
-        """Show all elements of one object.
+        """Show all elements (attributes, tabular sections, forms, commands) of ONE object.
+
+        USE: to see what fields/forms/commands an object has. `object_name`
+        accepts full Russian name (Справочник.Колледжи), short (Колледжи) or
+        English key (Catalog.Колледжи). NOT for searching "where is field X" —
+        use find_metadata_objects for that.
 
         Args:
-            object_name: full or short object name.
-            include_children: also list nested elements (e.g. table columns).
+            object_name: object name (full/short/English all accepted).
+            include_children: also list nested elements (columns of a tabular part).
         """
         obj = app.graph.object_by_name(object_name)
         if obj is None:
@@ -301,32 +311,44 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
     @mcp.tool
     def search_config(query: str, top_k: int = 5,
                       kind: Literal["object", "element", "symbol"] | None = None) -> str:
-        """Semantic search across objects, elements and BSL procedures.
+        """Semantic search across the whole configuration (objects, elements, code).
+
+        USE: as the FIRST tool when the user asks a vague "where/what is ..." —
+        it finds things by meaning, no exact name needed. Do NOT scan source
+        files or list_objects to hunt for something: call this instead.
 
         Args:
-            query: natural-language query in Russian or English.
-            top_k: number of results to return (min 1).
-            kind: optional filter — "object" | "element" | "symbol".
+            query: natural-language question, e.g. "где хранится цена товара".
+            top_k: how many results to return (default 5).
+            kind: narrow results: "object" | "element" | "symbol".
         """
         return _search_config(query, top_k=top_k, kind=kind or "")
 
     @mcp.tool
     def search_bsl_code(query: str, top_k: int = 5) -> str:
-        """Semantic search over BSL routine bodies (procedures/functions).
+        """Semantic search over BSL procedure/function bodies.
+
+        USE: "where is the logic that signs/sends/calculates X". Finds code by
+        what it does, not by exact name. Do NOT read module files to find code —
+        call this instead.
 
         Args:
-            query: natural-language phrase describing what the code does.
-            top_k: number of results to return (min 1).
+            query: phrase describing the behaviour, e.g. "отправка уведомления".
+            top_k: how many results (default 5).
         """
         return _search_config(query, top_k=top_k, kind="symbol")
 
     @mcp.tool
     def get_symbol(name: str, object_name: str = "") -> str:
-        """Show a BSL procedure/function: signature, visibility, module, body.
+        """Show one BSL procedure/function: signature, visibility, module, body.
+
+        USE: after you already know the exact routine name (from search_bsl_code
+        or get_bsl_modules). If you only have a vague idea, use search_bsl_code.
 
         Args:
-            name: procedure name (global namespace).
-            object_name: optional disambiguation — which configuration object's module.
+            name: exact procedure/function name.
+            object_name: optional, to pick the right overload when several
+                         objects define the same routine name.
         """
         syms = app.graph.symbols_by_name(name)
         if object_name:
@@ -348,11 +370,14 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
 
     @mcp.tool
     def get_callers(name: str, object_name: str = "") -> str:
-        """List procedures that call the given procedure (call graph, inbound).
+        """List who calls the given procedure (inbound call-graph edges).
+
+        USE: impact analysis — "if I change X, who is affected". For a full
+        traversal use get_bsl_call_graph(mode="callers").
 
         Args:
-            name: callee procedure name.
-            object_name: optional disambiguation of which overload to use.
+            name: the callee procedure name.
+            object_name: optional disambiguation when multiple objects have it.
         """
         syms = app.graph.symbols_by_name(name)
         if object_name:
@@ -370,11 +395,14 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
 
     @mcp.tool
     def get_callees(name: str, object_name: str = "") -> str:
-        """List procedures called by the given procedure (call graph, outbound).
+        """List what the given procedure calls (outbound call-graph edges).
+
+        USE: to trace what a routine depends on. For a full traversal use
+        get_bsl_call_graph(mode="callees").
 
         Args:
-            name: caller procedure name.
-            object_name: optional disambiguation of which overload to use.
+            name: the caller procedure name.
+            object_name: optional disambiguation when multiple objects have it.
         """
         syms = app.graph.symbols_by_name(name)
         if object_name:
@@ -393,11 +421,14 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
     @mcp.tool
     def get_references(object_name: str,
                        direction: Literal["in", "out", "both"] = "both") -> str:
-        """Show configuration references for an object.
+        """Show which objects this object references, and which reference it.
+
+        USE: to understand data-type links between objects ("what does the
+        attribute point to"). `object_name` accepts full/short/English name.
 
         Args:
-            object_name: full or short object name.
-            direction: "in" (who references it), "out" (what it references), "both".
+            object_name: object name (full/short/English).
+            direction: "in" (who references it) | "out" (what it references) | "both".
         """
         obj = app.graph.object_by_name(object_name)
         if obj is None:
@@ -425,9 +456,9 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
     def reindex(full: bool = False) -> str:
         """Rebuild the index from the configuration sources in the background.
 
-        The rebuild runs in a background thread so a full re-embed of a large
-        configuration does not block the MCP request. Poll `reindex_status`
-        for progress and completion.
+        USE only when the index is stale or empty (e.g. graph_stats shows 0, or
+        search returns nothing after sources changed). Runs in a background
+        thread — poll reindex_status. Do NOT call on every request.
 
         Args:
             full: full rebuild; otherwise incremental (only changed files).
@@ -465,7 +496,11 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
 
     @mcp.tool
     def graph_stats() -> str:
-        """Show index statistics: node/edge counts by kind."""
+        """Show index statistics: node/edge counts by kind.
+
+        USE: to check the index is populated before searching. If it returns 0,
+        the index is empty and needs reindex.
+        """
         s = app.graph.stats()
         if not s:
             return "Index is empty. Run reindex first."
@@ -492,11 +527,16 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
                      limit: int = 0, offset: int = 0) -> str:
         """Inventory of the configuration.
 
+        USE mode="summary" to start any task (counts of everything). Use
+        mode="categories" for counts per type, mode="objects" for a filtered
+        object list. Do NOT use mode="objects" without limit/object_name on a
+        large config — it dumps everything.
+
         Args:
             mode: summary (counts) | categories (by type) | objects (list).
             category: optional object type filter.
             object_name: name pattern for mode=objects.
-            object_match: matching mode.
+            object_match: matching mode (exact/starts_with/contains).
             limit: page size (0 = all).
             offset: page offset.
         """
@@ -553,9 +593,12 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
                                       tabular_part: str = "") -> str:
         """Structure of one object grouped by section.
 
+        USE: to drill into a single object. Pick only the sections you need
+        (e.g. sections="attributes,forms") — "all" can be long.
+
         Args:
             object_ref: object name (full/short/source_key).
-            sections: comma-separated section names (empty = all).
+            sections: comma-separated section names; empty = all supported.
             tabular_part: parent tabular-section name for tabular_attributes.
         """
         obj = _resolve_object(object_ref)
@@ -602,10 +645,14 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
     @mcp.tool
     def get_metadata_element_type(object_ref: str, element_type: str,
                                   container_ref: str = "") -> str:
-        """Typed children of an object.
+        """Typed children of an object (attributes/resources/dimensions/...).
+
+        USE: to list elements of a specific type, e.g. "all attributes of
+        Справочник.Колледжи" or "columns of tabular part X". Returns name + data
+        type + reference for each.
 
         Args:
-            object_ref: object name.
+            object_ref: object name (full/short/source_key).
             element_type: comma-separated element types to include.
             container_ref: parent element for nested children (e.g. tabular part).
         """
@@ -637,6 +684,9 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
                              ref: str, owner_ref: str = "",
                              mode: Literal["resolve", "properties"] = "resolve") -> str:
         """Resolve a reference to a node card.
+
+        USE: when you have a name/id and want its full card (synonym, type,
+        comment, owner). mode="properties" adds raw props for debugging.
 
         Args:
             ref_type: node kind (object/element/symbol).
@@ -671,8 +721,12 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
                                 sections: str = "") -> str:
         """Object dossier: counts + bounded lists by section.
 
+        USE: the single best tool when asked "tell me about object X" — returns
+        overview, structure, forms, BSL modules and usages in one call. Use this
+        instead of several separate get_object_elements/get_bsl_modules calls.
+
         Args:
-            object_ref: object name.
+            object_ref: object name (full/short/source_key).
             detail: list cap (brief/standard/extended).
             sections: comma-separated sections (empty = all).
         """
@@ -717,6 +771,10 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
                               within_object: str = "", limit: int = 20) -> str:
         """Find objects by description or by a child element name.
 
+        USE: "which object has a field/attribute/form named X" (search_by=
+        "attribute"/"form"/"tabular_part"/...) or "find the object whose purpose
+        is Y" (search_by="description"). This is the "where is field X" tool.
+
         Args:
             search_by: description or a child element type.
             search_text: text to match.
@@ -756,13 +814,16 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
                                owner_object: str = "",
                                mode: Literal["exact", "starts_with", "contains"] = "contains",
                                limit: int = 50) -> str:
-        """Find child elements across the project.
+        """Find child elements across the whole project with owner context.
+
+        USE: "across all objects, which have an attribute/tabular-section/form
+        named X". Returns each match with its owning object.
 
         Args:
             element_type: element type to match.
             element_name: name pattern.
             owner_object: restrict to one owning object.
-            mode: matching mode.
+            mode: matching mode (exact/starts_with/contains).
             limit: max results.
         """
         elems = app.graph.elements_matching(
@@ -779,8 +840,11 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
     def find_metadata_usages(target_ref: str, mode: str = "objects") -> str:
         """Who uses an object (references / modules).
 
+        USE: impact analysis before changing an object — "who links to this
+        object, which modules use it".
+
         Args:
-            target_ref: object name.
+            target_ref: object name (full/short/source_key).
             mode: objects (references + modules). register_movements not available.
         """
         obj = _resolve_object(target_ref)
@@ -803,6 +867,10 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
                         owner_ref: str = "", module_ref: str = "",
                         routine_name: str = "") -> str:
         """Modules of an owner and their routines.
+
+        USE mode="modules_of_owner" to list all modules (object/manager/forms)
+        of one object. Use mode="module_routines" to list routines inside a
+        given module. This is how you discover routine names before get_symbol.
 
         Args:
             mode: modules_of_owner / module_routines / common_module_routines.
@@ -841,7 +909,11 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
                             mode: Literal["name", "exported", "signature"] = "name",
                             object_name: str = "", exported_only: bool = False,
                             limit: int = 50) -> str:
-        """Search BSL routines.
+        """Search BSL routines by name, signature or export status.
+
+        USE: to find a specific procedure/function by its name (mode="name"),
+        by parameter list (mode="signature"), or all exported routines
+        (mode="exported"). For a vague "what does X do" use search_bsl_code.
 
         Args:
             name: name pattern (mode=name) or signature substring (mode=signature).
@@ -876,6 +948,10 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
                              body_offset: int = 0, body_limit: int = 4000) -> str:
         """Body and metadata of a routine, with pagination.
 
+        USE: to read the code of a specific routine you found earlier. Use
+        body_offset/body_limit to page through long bodies instead of dumping
+        everything at once.
+
         Args:
             routine_ref: routine name.
             owner_ref: optional owner object filter.
@@ -907,6 +983,10 @@ def build_server(cfg: AppConfig | None = None) -> FastMCP:
                            mode: Literal["callees", "callers", "subtree"] = "callees",
                            depth: int = 2, owner_ref: str = "") -> str:
         """Call graph from a routine.
+
+        USE mode="callees" to see what it calls, mode="callers" who calls it,
+        mode="subtree" for a multi-level traversal (set depth). Supersedes
+        get_callers/get_callees for anything beyond one hop.
 
         Args:
             routine_ref: routine name.
