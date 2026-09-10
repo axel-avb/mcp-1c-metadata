@@ -55,9 +55,11 @@
 3. Полный переэмбеддинг legacy-символов в Qdrant после смены парсера.
 
 ## Расширение инструментария (дорожная карта — PLAN.md §13)
-- **Слой A** (в туду, реализуемо сейчас): `get_metadata`, `inspect_metadata_object`,
-  `find_metadata_objects/elements`, `get_metadata_object_structure`, `get_bsl_modules`,
-  `search_bsl_routines`, `get_bsl_routine_body`, `get_bsl_call_graph`, `search_bsl_code`.
+- **Слой A** — ✅ **реализован**: `get_metadata`, `inspect_metadata_object`,
+  `find_metadata_objects/elements/usages`, `get_metadata_object_structure`,
+  `get_metadata_element_type`, `get_metadata_details`, `get_bsl_modules`,
+  `search_bsl_routines`, `get_bsl_routine_body` (пагинация),
+  `get_bsl_call_graph` (subtree), `search_bsl_code`. Всего 23 инструмента.
 - **Слой B** (в плане, с усилиями): интеграция `predefined_parser`,
   `event_subscription_parser`, `role_rights_parser` → `find_predefined_values`,
   `get_event_subscriptions`, `get_access_rights`.
