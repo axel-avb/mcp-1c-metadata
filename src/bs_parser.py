@@ -109,25 +109,19 @@ def _strip_strings_and_comments(line: str) -> str:
     return line
 
 
-def parse_bs_file(
+def parse_bs_text(
+    text: str,
     path: Path,
     module_role: str = "",
     object_name: str = "",
     max_body_chars: int = 4000,
 ) -> BSModule:
+    """Parse BSL source text (in-memory) into a BSModule."""
     module = BSModule(path=path, module_role=module_role, object_name=object_name)
-    try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    if not text:
         return module
 
     lines = text.splitlines(keepends=True)
-    line_offsets: list[int] = []
-    off = 0
-    for ln in lines:
-        line_offsets.append(off)
-        off += len(ln)
-
     n = len(lines)
 
     # pass 1: find declarations and their bodies (by scanning to matching end)
@@ -193,6 +187,19 @@ def parse_bs_file(
                 module.object_refs.append((om.group(1), obj_short))
 
     return module
+
+
+def parse_bs_file(
+    path: Path,
+    module_role: str = "",
+    object_name: str = "",
+    max_body_chars: int = 4000,
+) -> BSModule:
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return BSModule(path=path, module_role=module_role, object_name=object_name)
+    return parse_bs_text(text, path, module_role, object_name, max_body_chars)
 
 
 _TYPE_FOLDER_TO_RU: dict[str, str] = {

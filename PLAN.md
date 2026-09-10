@@ -107,17 +107,18 @@ CREATE TABLE IF NOT EXISTS object_checksums (
 - Извлекает `Properties` (Name/Synonym/Comment), типы реквизитов (`Type/Types/TypeDescription`).
 - Обогащает объект из манифеста; битый/отсутствующий файл → пропуск, объект остаётся в каркасном виде.
 
-### 4.3 Шов легаси-парсера (заглушка, TODO phase-2)
+### 4.3 Шов легаси-парсера (интегрирован, phase-2 ✅)
+
+Вендорен `parsers/` (github.com/axel-avb/v8_ordinary_unpack, pure-stdlib). `parse_legacy_object`
+извлекает BSL-код + структуру формы из `Form.bin`; `_collect_legacy_form_modules` в indexer
+превращает каждую форму в виртуальный BSL-модуль (символы с `is_legacy=True`).
+Схема формы (элементы управления) остаётся в text-описании парсера, в граф не раскладывается.
 
 ```python
-def parse_legacy_object(source_key: str, dump_dir: Path) -> bytes | None:
-    # TODO(phase-2): invoke the external 1C binary-format parser here.
-    # For now legacy data stays in its binary representation untouched.
-    raise NotImplementedError
+def parse_legacy_object(source_key: str, dump_dir: Path) -> dict | None:
+    # returns {"module_code": ..., "structure_text": ..., "form_count": N}
+    ...
 ```
-
-- Единственная точка вызова в проекте; внешний парсер не подключается на этом этапе.
-- Данные неуправляемых форм хранятся «как есть» (бинарно), в граф не раскладываются.
 
 ### 4.4 BSL — поправить источник
 - Сейчас `config_root` указывает на `metadata` → `found 0 BSL files`.

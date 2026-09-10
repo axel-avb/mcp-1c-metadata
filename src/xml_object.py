@@ -77,10 +77,54 @@ def object_is_legacy(object_dir: Path, global_legacy: bool) -> bool:
     return False
 
 
-def parse_legacy_object(source_key: str, dump_dir: Path) -> bytes | None:
-    """TODO(phase-2): invoke the external 1C binary-format parser here.
+def _find_legacy_forms(dump_dir: Path) -> list[Path]:
+    """Find Form.bin files (ordinary/legacy forms) under an object's directory."""
+    try:
+        return sorted(dump_dir.rglob("Form.bin"))
+    except OSError:
+        return []
 
-    For now legacy/ordinary form data stays in its binary representation
-    untouched. This is the single call-site for the future integration.
+
+def parse_legacy_object(source_key: str, dump_dir: Path) -> dict | None:
+    """Parse the legacy (ordinary) forms of one object via the vendored binary parser.
+
+    Returns a dict with:
+      * module_code — the BSL code of the form modules (concatenated),
+      * structure_text — the curly-brace form structure text (concatenated),
+      * form_count — number of Form.bin files found.
+
+    The vendored parser lives in `parsers/` (from github.com/axel-avb/v8_ordinary_unpack).
+    A missing/broken file simply contributes nothing (tolerant by design).
     """
-    raise NotImplementedError
+    forms = _find_legacy_forms(dump_dir)
+    if not forms:
+        return None
+
+    try:
+        from parsers.form_bin_parser_v2 import V8FormBinParser  # type: ignore
+    except ImportError as e:
+        log.warning("legacy parser unavailable: %s", e)
+        return None
+
+    parser = V8FormBinParser()
+    module_codes: list[str] = []
+    structure_texts: list[str] = []
+    for f in forms:
+        try:
+            result = parser.parse(f)
+        except Exception as e:
+            log.warning("legacy parse failed for %s: %s", f, e)
+            continue
+        if result.module_code and result.module_code.strip():
+            module_codes.append(result.module_code)
+        if result.form_structure_text and result.form_structure_text.strip():
+            structure_texts.append(result.form_structure_text)
+
+    if not module_codes and not structure_texts:
+        return None
+
+    return {
+        "module_code": "\n".join(module_codes),
+        "structure_text": "\n".join(structure_texts),
+        "form_count": len(forms),
+    }

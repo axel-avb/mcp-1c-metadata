@@ -17,7 +17,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .bs_parser import parse_bs_file, infer_module_role
+from .bs_parser import parse_bs_file, parse_bs_text, infer_module_role
 from .config import AppConfig, load_config
 from .config_parser import (
     ConfigElement,
@@ -31,7 +31,7 @@ from .embedder import Embedder
 from .graph import GraphStore
 from .xml_manifest import parse_dumpinfo, source_key_for
 from .xml_config import parse_configuration
-from .xml_object import object_is_legacy
+from .xml_object import object_is_legacy, parse_legacy_object
 
 log = logging.getLogger(__name__)
 
@@ -230,6 +230,48 @@ def collect_graph(cfg: AppConfig):
         if owner_obj_id:
             edges.append((owner_obj_id, mid, "HAS_MODULE"))
 
+    # ---- legacy (ordinary) forms: extract BSL code from Form.bin ------------
+    legacy_forms = _collect_legacy_form_modules(cfg, objects)
+    for rel, object_name, owner_obj_id, code in legacy_forms:
+        f = Path(rel)
+        role = f"form:{f.parent.parent.name if f.parent and f.parent.parent else f.stem}"
+        module = parse_bs_text(code, f, module_role=role, object_name=object_name)
+        if not module.symbols:
+            continue
+        parsed_modules.append((f, module))
+
+        mid = stable_id("module", rel)
+        nodes.append({
+            "id": mid, "kind": "module", "name": rel, "object_name": object_name,
+            "type": role, "props": {"owner_object_id": owner_obj_id, "is_legacy": True},
+        })
+
+        for sym in module.symbols:
+            sid = stable_id("symbol", sym.qualified_name, rel)
+            symbol_ids_by_name.setdefault(sym.name, []).append(sid)
+            nodes.append({
+                "id": sid, "kind": "symbol", "name": sym.name,
+                "object_name": object_name, "type": sym.kind,
+                "props": {"visibility": sym.visibility, "line": sym.line,
+                          "params": sym.params, "module": rel,
+                          "body": sym.body, "is_legacy": True},
+            })
+            hashes[sid] = _hash("symbol", sym.name, sym.body)
+            pl = {"kind": "symbol", "name": sym.name, "object": object_name,
+                  "visibility": sym.visibility, "line": sym.line, "module": rel,
+                  "is_legacy": True}
+            if cfg.node_id_in_payload:
+                pl["node_id"] = sid
+            embed_items.append(EmbeddingItem(
+                sid,
+                f"{sym.kind} {sym.name}({sym.params}) — {object_name}, модуль: {role}\n{sym.body}",
+                payload=pl,
+            ))
+            edges.append((mid, sid, "DEFINES"))
+
+        if owner_obj_id:
+            edges.append((owner_obj_id, mid, "HAS_MODULE"))
+
     # CALLS edges (symbol -> symbol, resolved by name in the global namespace)
     seen_calls: set[tuple[str, str]] = set()
     for f, module in parsed_modules:
@@ -262,6 +304,45 @@ def _rel_path(f: Path, base: Path) -> str:
         return str(f.relative_to(base))
     except ValueError:
         return str(f)
+
+
+def _collect_legacy_form_modules(cfg: AppConfig, objects: list[ConfigObject]):
+    """Yield (rel, object_name, owner_obj_id, code) for legacy Form.bin modules.
+
+    Legacy (ordinary) forms store their BSL code inside a binary Form.bin rather
+    than a .bsl file. We extract it via the vendored parser (parsers/) and turn
+    each form into a virtual BSL module so its procedures join the symbol layer.
+    """
+    xml_root = cfg.resolve_xml_root()
+    obj_by_name = {obj.name: stable_id("object", obj.node_id) for obj in objects}
+
+    try:
+        from parsers.form_bin_parser_v2 import V8FormBinParser  # type: ignore
+    except ImportError as e:
+        log.warning("legacy parser unavailable: %s", e)
+        return
+
+    parser = V8FormBinParser()
+    for obj in objects:
+        if not obj.source_key:
+            continue
+        from .xml_manifest import folder_for_type
+        folder = folder_for_type(obj.english_type or obj.source_key.split(".", 1)[0])
+        short = obj.source_key.split(".", 1)[-1]
+        obj_dir = xml_root / folder / short
+        if not obj_dir.is_dir():
+            continue
+        owner_obj_id = obj_by_name.get(obj.name, "")
+        for f in sorted(obj_dir.rglob("Form.bin")):
+            try:
+                result = parser.parse(f)
+            except Exception as e:
+                log.warning("legacy parse failed for %s: %s", f, e)
+                continue
+            if not result.module_code or not result.module_code.strip():
+                continue
+            rel = _rel_path(f, xml_root)
+            yield rel, obj.name, owner_obj_id, result.module_code
 
 
 def _object_legacy(cfg: AppConfig, obj: ConfigObject, global_legacy: bool) -> bool:
