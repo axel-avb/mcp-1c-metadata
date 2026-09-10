@@ -194,25 +194,51 @@ python -m src.server
 
 ### Инструменты (tools)
 
+**Инвентарь и структура**
+
 | Инструмент | Назначение |
 |---|---|
-| `list_objects(type?)` | Объекты конфигурации сгруппированы по типам, число элементов |
-| `get_object_elements(object_name, include_children=true)` | Все элементы объекта: реквизиты, табличные части, команды; типы данных и ссылки |
+| `get_metadata(mode, category?, object_name?, object_match?, limit?, offset?)` | Инвентарь: `summary` (счётчики), `categories` (типы), `objects` (список с фильтром) |
+| `inspect_metadata_object(object_ref, detail?, sections?)` | Досье объекта одним вызовом: счётчики, структура, формы, BSL-модули, использование |
+| `get_metadata_object_structure(object_ref, sections?, tabular_part?)` | Структура объекта по секциям (attributes/tabular_parts/forms/commands/layouts/resources/dimensions) |
+| `get_metadata_element_type(object_ref, element_type, container_ref?)` | Типизированные дети объекта (реквизиты/ресурсы/измерения/…) |
+| `get_metadata_details(ref_type, ref, owner_ref?, mode?)` | Разрешение ссылки в карточку узла (object/element/symbol) |
+| `list_objects(type?)` | Объекты по типам с числом элементов |
+| `get_object_elements(object_name, include_children=true)` | Элементы объекта: реквизиты, табличные части, команды |
+
+**Поиск**
+
+| Инструмент | Назначение |
+|---|---|
 | `search_config(query, top_k=5, kind?)` | Семантический поиск по объектам/элементам/процедурам (embed → Qdrant → rerank) |
-| `get_symbol(name, object_name?)` | Процедура/функция: сигнатура, видимость, модуль, строка |
-| `get_callers(name, object_name?)` | Кто вызывает данную процедуру (входные рёбра графа вызовов) |
-| `get_callees(name, object_name?)` | Что вызывает данная процедура (выходные рёбра) |
-| `get_references(object_name, direction="both")` | Ссылки на объект и от объекта (типы данных реквизитов) |
-| `reindex(full=false)` | Пересбор индекса в фоновом потоке (не блокирует MCP-запрос) |
-| `reindex_status` | Статус фоновой переиндексации (idle/running/done/failed) |
+| `find_metadata_objects(search_by, search_text?, within_object?, limit?)` | Найти объекты по описанию или по имени дочернего элемента («где поле X») |
+| `find_metadata_elements(element_type, element_name?, owner_object?, mode?, limit?)` | Дочерние элементы по всему проекту с контекстом владельца |
+| `find_metadata_usages(target_ref, mode?)` | Кто ссылается на объект / какие модули его используют |
+
+**BSL**
+
+| Инструмент | Назначение |
+|---|---|
+| `search_bsl_code(query, top_k=5)` | Семантический поиск по телам процедур/функций |
+| `get_symbol(name, object_name?)` | Процедура/функция: сигнатура, видимость, модуль, тело |
+| `get_callers(name, object_name?)` | Кто вызывает процедуру (входные рёбра) |
+| `get_callees(name, object_name?)` | Что вызывает процедура (выходные рёбра) |
+| `get_bsl_call_graph(routine_ref, mode?, depth?, owner_ref?)` | Граф вызовов: `callees`/`callers`/`subtree` (BFS с глубиной) |
+| `get_bsl_routine_body(routine_ref, owner_ref?, body_offset?, body_limit?)` | Тело рутины с пагинацией |
+| `get_bsl_modules(mode, owner_ref?, module_ref?, routine_name?)` | Модули объекта и их рутины |
+| `search_bsl_routines(name?, mode?, object_name?, exported_only?, limit?)` | Поиск рутин по имени/экспорту/сигнатуре |
+
+**Ссылки и служебные**
+
+| Инструмент | Назначение |
+|---|---|
+| `get_references(object_name, direction="both")` | Ссылки на объект и от объекта |
+| `reindex(full=false)` | Пересбор индекса в фоне |
+| `reindex_status` | Статус фоновой переиндексации |
 | `graph_stats` | Статистика графа: узлы/рёбра по видам |
 
-План расширения инструментария (полная дорожная карта — `PLAN.md` §13):
+Дорожная карта оставшегося (полная — `PLAN.md` §13):
 
-- **Слой A** (реализуемо на текущей модели): `get_metadata`, `inspect_metadata_object`,
-  `find_metadata_objects`, `find_metadata_elements`, `get_metadata_object_structure`,
-  `get_bsl_modules`, `search_bsl_routines`, `get_bsl_routine_body` (пагинация),
-  `get_bsl_call_graph` (subtree), `search_bsl_code`.
 - **Слой B** (нужна интеграция парсеров из сабмодуля): `find_predefined_values`,
   `get_event_subscriptions`, `get_access_rights`.
 - **Слой C** (отложено, нет модели): `get_extension_object_diff`,

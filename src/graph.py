@@ -26,6 +26,25 @@ from typing import Any, Iterable
 
 log = logging.getLogger(__name__)
 
+
+def _like(pattern: str, mode: str) -> str:
+    esc = pattern.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    if mode == "exact":
+        return esc
+    if mode == "starts_with":
+        return esc + "%"
+    return "%" + esc + "%"
+
+
+def _limit_offset(limit: int, offset: int) -> str:
+    if offset <= 0 and limit <= 0:
+        return ""
+    if offset <= 0:
+        return f" LIMIT {limit}"
+    if limit <= 0:
+        return f" LIMIT -1 OFFSET {offset}"
+    return f" LIMIT {limit} OFFSET {offset}"
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS nodes (
     id          TEXT PRIMARY KEY,
@@ -253,6 +272,170 @@ class GraphStore:
                 (name,),
             )
             return self._rows_to_dicts(cur.fetchall())
+
+    # ---------------------------------------------------- search / filters ---
+
+    def object_counts(self) -> dict[str, int]:
+        """Count objects by normalized type."""
+        with self._lock:
+            cur = self.conn.execute(
+                "SELECT type, COUNT(*) c FROM nodes WHERE kind='object' GROUP BY type"
+            )
+            return {r["type"]: r["c"] for r in cur.fetchall()}
+
+    def objects_matching(
+        self,
+        pattern: str,
+        mode: str = "contains",
+        type_filter: str | None = None,
+        limit: int = 0,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """Search object nodes by name. mode: exact | starts_with | contains."""
+        like = _like(pattern, mode)
+        sql = "SELECT * FROM nodes WHERE kind='object' AND name LIKE ?"
+        args: list[Any] = [like]
+        if type_filter:
+            sql += " AND type=?"
+            args.append(type_filter)
+        sql += " ORDER BY name"
+        sql += _limit_offset(limit, offset)
+        with self._lock:
+            return self._rows_to_dicts(self.conn.execute(sql, args).fetchall())
+
+    def elements_matching(
+        self,
+        elem_type: str | None = None,
+        name_pattern: str | None = None,
+        mode: str = "contains",
+        object_name: str | None = None,
+        limit: int = 0,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """Search element nodes across the whole project, optionally filtered."""
+        sql = "SELECT * FROM nodes WHERE kind='element'"
+        args: list[Any] = []
+        if elem_type:
+            sql += " AND type=?"
+            args.append(elem_type)
+        if name_pattern:
+            sql += " AND name LIKE ?"
+            args.append(_like(name_pattern, mode))
+        if object_name:
+            sql += " AND object_name=?"
+            args.append(object_name)
+        sql += " ORDER BY object_name, name"
+        sql += _limit_offset(limit, offset)
+        with self._lock:
+            return self._rows_to_dicts(self.conn.execute(sql, args).fetchall())
+
+    def modules_of_object(self, object_id: str) -> list[dict[str, Any]]:
+        """Modules owned by an object (HAS_MODULE: object -> module)."""
+        with self._lock:
+            cur = self.conn.execute(
+                "SELECT n.* FROM nodes n JOIN edges e ON e.dst = n.id "
+                "WHERE e.src = ? AND e.kind='HAS_MODULE' ORDER BY n.name",
+                (object_id,),
+            )
+            return self._rows_to_dicts(cur.fetchall())
+
+    def symbols_of_module(self, module_id: str) -> list[dict[str, Any]]:
+        """Symbols defined by a module (DEFINES: module -> symbol)."""
+        with self._lock:
+            cur = self.conn.execute(
+                "SELECT n.* FROM nodes n JOIN edges e ON e.dst = n.id "
+                "WHERE e.src = ? AND e.kind='DEFINES' ORDER BY n.name",
+                (module_id,),
+            )
+            return self._rows_to_dicts(cur.fetchall())
+
+    def search_symbols(
+        self,
+        name_pattern: str | None = None,
+        mode: str = "contains",
+        exported: bool | None = None,
+        object_name: str | None = None,
+        limit: int = 0,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """Search symbol nodes by name/visibility/owner."""
+        sql = "SELECT * FROM nodes WHERE kind='symbol'"
+        args: list[Any] = []
+        if name_pattern:
+            sql += " AND name LIKE ?"
+            args.append(_like(name_pattern, mode))
+        if exported is True:
+            sql += " AND props LIKE '%\"visibility\": \"global\"%'"
+        elif exported is False:
+            sql += " AND props NOT LIKE '%\"visibility\": \"global\"%'"
+        if object_name:
+            sql += " AND object_name=?"
+            args.append(object_name)
+        sql += " ORDER BY object_name, name"
+        sql += _limit_offset(limit, offset)
+        with self._lock:
+            return self._rows_to_dicts(self.conn.execute(sql, args).fetchall())
+
+    def call_subtree(
+        self, symbol_ids: list[str], direction: str = "out", max_depth: int = 3
+    ) -> list[tuple[int, dict[str, Any]]]:
+        """BFS over CALLS edges. direction 'out' = callees, 'in' = callers.
+
+        Returns list of (depth, symbol) in discovery order (excluding the seed).
+        """
+        if not symbol_ids:
+            return []
+        edge_kind = "CALLS"
+        col = "dst" if direction == "out" else "src"  # where we look from seed
+        join_col = "src" if direction == "out" else "dst"
+        # Build adjacency once for the given direction.
+        adj: dict[str, list[str]] = {}
+        with self._lock:
+            for i in range(0, len(symbol_ids), self._SQLITE_PARAM_LIMIT):
+                chunk = symbol_ids[i : i + self._SQLITE_PARAM_LIMIT]
+                ph = ",".join("?" * len(chunk))
+                cur = self.conn.execute(
+                    f"SELECT e.{col} AS a, e.{join_col} AS b FROM edges e "
+                    f"WHERE e.kind=? AND e.{col} IN ({ph})",
+                    [edge_kind, *chunk],
+                )
+                for r in cur.fetchall():
+                    adj.setdefault(r["a"], []).append(r["b"])
+        # BFS. But adjacency is only seeded from the initial ids; deeper levels
+        # need their own neighbours, so fetch incrementally by level.
+        seen: set[str] = set(symbol_ids)
+        result: list[tuple[int, dict[str, Any]]] = []
+        frontier = list(symbol_ids)
+        node_cache: dict[str, dict[str, Any]] = {}
+
+        def fetch(ids: list[str]) -> None:
+            todo = [i for i in ids if i not in node_cache]
+            for i in range(0, len(todo), self._SQLITE_PARAM_LIMIT):
+                chunk = todo[i : i + self._SQLITE_PARAM_LIMIT]
+                ph = ",".join("?" * len(chunk))
+                with self._lock:
+                    cur = self.conn.execute(
+                        f"SELECT * FROM nodes WHERE id IN ({ph})", chunk
+                    )
+                for d in self._rows_to_dicts(cur.fetchall()):
+                    node_cache[d["id"]] = d
+
+        for depth in range(1, max_depth + 1):
+            nxt: list[str] = []
+            for src in frontier:
+                for dst in adj.get(src, []):
+                    if dst not in seen:
+                        seen.add(dst)
+                        nxt.append(dst)
+            if not nxt:
+                break
+            fetch(nxt)
+            # order by name for stable output
+            level_nodes = [node_cache[i] for i in nxt if i in node_cache]
+            level_nodes.sort(key=lambda n: n["name"])
+            result.extend((depth, n) for n in level_nodes)
+            frontier = nxt
+        return result
 
     _SQLITE_PARAM_LIMIT = 900
 

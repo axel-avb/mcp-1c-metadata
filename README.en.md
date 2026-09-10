@@ -181,23 +181,41 @@ and the reranker client in memory. Vector queries to Qdrant run on the fly.
 
 | Tool | Purpose |
 |---|---|
+| `get_metadata(mode, category?, object_name?, object_match?, limit?, offset?)` | Inventory: `summary` (counts), `categories` (types), `objects` (filtered list) |
+| `inspect_metadata_object(object_ref, detail?, sections?)` | Object dossier in one call: counts, structure, forms, BSL modules, usages |
+| `get_metadata_object_structure(object_ref, sections?, tabular_part?)` | Object structure by section (attributes/tabular_parts/forms/commands/layouts/resources/dimensions) |
+| `get_metadata_element_type(object_ref, element_type, container_ref?)` | Typed children of an object (attributes/resources/dimensions/...) |
+| `get_metadata_details(ref_type, ref, owner_ref?, mode?)` | Resolve a reference into a node card (object/element/symbol) |
 | `list_objects(type?)` | Configuration objects grouped by type, with element counts |
-| `get_object_elements(object_name, include_children=true)` | All elements of an object: attributes, tabular sections, commands; data types and references |
+| `get_object_elements(object_name, include_children=true)` | All elements of an object: attributes, tabular sections, commands |
+
+| Tool | Purpose |
+|---|---|
 | `search_config(query, top_k=5, kind?)` | Semantic search across objects/elements/procedures (embed → Qdrant → rerank) |
-| `get_symbol(name, object_name?)` | Procedure/function: signature, visibility, module, line |
-| `get_callers(name, object_name?)` | Who calls this procedure (incoming call-graph edges) |
+| `find_metadata_objects(search_by, search_text?, within_object?, limit?)` | Find objects by description or by a child element name ("where is field X") |
+| `find_metadata_elements(element_type, element_name?, owner_object?, mode?, limit?)` | Child elements across the project with owner context |
+| `find_metadata_usages(target_ref, mode?)` | Who references an object / which modules use it |
+
+| Tool | Purpose |
+|---|---|
+| `search_bsl_code(query, top_k=5)` | Semantic search over procedure/function bodies |
+| `get_symbol(name, object_name?)` | Procedure/function: signature, visibility, module, body |
+| `get_callers(name, object_name?)` | Who calls this procedure (incoming edges) |
 | `get_callees(name, object_name?)` | What this procedure calls (outgoing edges) |
-| `get_references(object_name, direction="both")` | References to/from an object (attribute data types) |
-| `reindex(full=false)` | Rebuild the index in a background thread (does not block the MCP request) |
-| `reindex_status` | Status of the background reindex (idle/running/done/failed) |
+| `get_bsl_call_graph(routine_ref, mode?, depth?, owner_ref?)` | Call graph: `callees`/`callers`/`subtree` (BFS with depth) |
+| `get_bsl_routine_body(routine_ref, owner_ref?, body_offset?, body_limit?)` | Routine body with pagination |
+| `get_bsl_modules(mode, owner_ref?, module_ref?, routine_name?)` | Modules of an object and their routines |
+| `search_bsl_routines(name?, mode?, object_name?, exported_only?, limit?)` | Search routines by name/export/signature |
+
+| Tool | Purpose |
+|---|---|
+| `get_references(object_name, direction="both")` | References to/from an object |
+| `reindex(full=false)` | Rebuild the index in a background thread |
+| `reindex_status` | Status of the background reindex |
 | `graph_stats` | Graph statistics: nodes/edges by kind |
 
-Tooling roadmap (full map in `PLAN.md` §13):
+Remaining roadmap (full map in `PLAN.md` §13):
 
-- **Tier A** (doable on the current model): `get_metadata`, `inspect_metadata_object`,
-  `find_metadata_objects`, `find_metadata_elements`, `get_metadata_object_structure`,
-  `get_bsl_modules`, `search_bsl_routines`, `get_bsl_routine_body` (pagination),
-  `get_bsl_call_graph` (subtree), `search_bsl_code`.
 - **Tier B** (needs submodule parsers wired into the graph): `find_predefined_values`,
   `get_event_subscriptions`, `get_access_rights`.
 - **Tier C** (deferred, no data model): `get_extension_object_diff`,

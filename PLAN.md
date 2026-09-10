@@ -270,23 +270,27 @@ python -m src.indexer [--config X] [--full] [--no-vectors]
 модели данных (SQLite: object/element/symbol/module + рёбра
 HAS_ELEMENT/CHILD_ELEMENT/REFERENCE/DEFINES/CALLS/USES/HAS_MODULE; Qdrant — семантика).
 
-### Слой A — реализуемо сейчас (данные уже в графе)
+### Слой A — реализовано ✅ (23 инструмента)
 
 | Инструмент | База | Замечания |
 |---|---|---|
-| `get_metadata` | `list_objects` + `graph_stats` | добавить `mode=categories/objects`, `object_match`, `only_adopted` |
-| `get_metadata_object_structure` | `get_object_elements` | добавить фильтр `sections` (attributes/tabular_parts/forms/commands/layouts/resources/dimensions) |
+| `get_metadata` | `object_counts`/`objects_matching` | summary/categories/objects + object_match + limit/offset |
+| `get_metadata_object_structure` | `elements_of` + filter | sections: attributes/tabular_parts/characteristics/resources/dimensions/forms/commands/layouts/enum_values/predefined/url_* |
 | `inspect_metadata_object` | обёртка | overview/structure/forms/bsl/usages; access/predefined/subscriptions — нет |
-| `get_metadata_details` (resolve) | `object_by_name`/`symbols_by_name`/`element_by` | properties — частично |
-| `get_metadata_element_type` | `data_type`/`ref_object` на элементах | типы реквизитов уже есть |
-| `find_metadata_objects` | SQL `comment`/`synonym`/`name` | `search_by: description/attribute/form/tabular_part/resource/dimension` |
-| `find_metadata_elements` | SQL `element.type` + `object_name` | всё есть |
-| `find_metadata_usages` (objects) | `get_references` | USES/REFERENCE; `register_movements` — нет |
-| `get_bsl_modules` | SQL `module`/`DEFINES` | modules_of_owner / module_routines |
-| `search_bsl_routines` | `symbols` | name/signature/exported/is_legacy; `description`/`unused` — нет |
-| `get_bsl_routine_body` | `get_symbol` | + `body_offset/limit` (пагинация тела) |
-| `get_bsl_call_graph` | `get_callers`/`get_callees` | + `mode=subtree` (BFS по CALLS, `depth`) |
-| `search_bsl_code` | `search_config(kind="symbol")` | + фильтры export/owner_categories |
+| `get_metadata_details` | resolve | object/element/symbol; properties |
+| `get_metadata_element_type` | `data_type`/`ref_object` | типизированные дети + container_ref |
+| `find_metadata_objects` | `elements_matching` + description-скан | search_by: description/attribute/tabular_part/resource/dimension/form/command/layout |
+| `find_metadata_elements` | `elements_matching` | element_type + owner_object + match-режимы |
+| `find_metadata_usages` | `references_to` + `modules_using` | register_movements — нет |
+| `get_bsl_modules` | `modules_of_object`/`symbols_of_module` | modules_of_owner / module_routines / common_module_routines |
+| `search_bsl_routines` | `search_symbols` | name/signature/exported; description/unused — нет |
+| `get_bsl_routine_body` | `symbols_by_name` | body_offset/body_limit (пагинация) |
+| `get_bsl_call_graph` | `callees`/`callers`/`call_subtree` | mode=callees/callers/subtree + depth |
+| `search_bsl_code` | `_search_config(kind="symbol")` | семантика по телам рутин |
+
+GraphStore пополнен: `object_counts`, `objects_matching`, `elements_matching`,
+`modules_of_object`, `symbols_of_module`, `search_symbols`, `call_subtree`,
+плюс хелперы `_like`/`_limit_offset` (match-режимы + пагинация).
 
 ### Слой B — с усилиями (нужна интеграция парсеров из сабмодуля в граф)
 
@@ -310,8 +314,6 @@ HAS_ELEMENT/CHILD_ELEMENT/REFERENCE/DEFINES/CALLS/USES/HAS_MODULE; Qdrant — с
 
 ### Рекомендация (порядок)
 
-1. Слой A → `inspect_metadata_object` (досье одним вызовом), затем
-   `find_metadata_objects`/`find_metadata_elements` («где поле X»), потом
-   `get_bsl_call_graph(subtree)` + `get_bsl_routine_body(пагинация)`.
+1. ~~Слой A~~ — **реализовано** (23 инструмента).
 2. Слой B — по подтверждению владельца (predefined/подписки/права).
 3. Слой C — последняя очередь.
